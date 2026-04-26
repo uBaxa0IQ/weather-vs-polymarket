@@ -78,6 +78,9 @@ async def _request(url: str, timeout: float = 30.0) -> httpx.Response:
             return resp
         except httpx.HTTPStatusError as exc:
             last_exc = exc
+            # Auth/authz failures won't recover with retries.
+            if exc.response.status_code in (401, 403):
+                break
             if attempt < settings.external_api_retries - 1:
                 retry_after = exc.response.headers.get("Retry-After")
                 if exc.response.status_code == 429 and retry_after:

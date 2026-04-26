@@ -71,16 +71,26 @@ async def _main() -> None:
     interval = int(settings.scheduler_interval_seconds)
     now_utc = datetime.now(timezone.utc)
     next_run_at = await _load_next_run()
+    run_immediately = False
     if next_run_at is None:
+        run_immediately = True
         next_run_at = _next_slot_from(now_utc, interval)
     else:
         next_run_at = _advance_to_future(next_run_at, now_utc, interval)
     await _save_next_run(next_run_at)
-    logger.info(
-        "worker started (interval=%ds) — next scheduled run at %s",
-        interval,
-        next_run_at.isoformat(),
-    )
+    if run_immediately:
+        logger.info("worker started (interval=%ds) — first run starts immediately", interval)
+        try:
+            await run_pipeline_once(triggered_by="worker")
+        except Exception:
+            logger.exception("worker: initial pipeline error")
+        logger.info("worker: next scheduled run at %s", next_run_at.isoformat())
+    else:
+        logger.info(
+            "worker started (interval=%ds) — next scheduled run at %s",
+            interval,
+            next_run_at.isoformat(),
+        )
 
     while not _shutdown.is_set():
         now_utc = datetime.now(timezone.utc)
