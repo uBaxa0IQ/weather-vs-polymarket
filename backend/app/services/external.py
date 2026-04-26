@@ -154,6 +154,20 @@ def _bucket_center(lo: float | None, hi: float | None) -> float | None:
     return None
 
 
+def infer_bucket_unit(labels: list[str]) -> str | None:
+    for label in labels:
+        s = str(label or "").lower().replace(" ", "")
+        # Handles common polymarket bucket forms:
+        # - "48-49f"
+        # - "50forhigher"
+        # - "18c" / "20corbelow"
+        if re.search(r"-?\d+f(?:or|$|[^a-z])", s):
+            return "F"
+        if re.search(r"-?\d+c(?:or|$|[^a-z])", s):
+            return "C"
+    return None
+
+
 def _extract_station_code_from_url(url: str) -> str | None:
     parsed = urllib.parse.urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
@@ -345,7 +359,16 @@ async def fetch_polymarket_implied(event_slug: str, target: date) -> dict:
     q = urllib.parse.urlencode({"slug": event_slug, "active": "true", "limit": 5})
     data = await _get_json(f"{GAMMA_EVENTS_URL}?{q}")
     if not isinstance(data, list) or not data:
-        return {"implied": None, "top_bucket": None, "top_price": None, "n": 0, "bucket_labels": [], "bucket_prices": [], "top_bucket_index": None}
+        return {
+            "implied": None,
+            "top_bucket": None,
+            "top_price": None,
+            "n": 0,
+            "bucket_labels": [],
+            "bucket_prices": [],
+            "top_bucket_index": None,
+            "bucket_unit": None,
+        }
     markets = data[0].get("markets", [])
     rows: list[tuple[str, float, float]] = []
     for m in markets:
@@ -365,7 +388,16 @@ async def fetch_polymarket_implied(event_slug: str, target: date) -> dict:
         if center is not None:
             rows.append((label, p, center))
     if not rows:
-        return {"implied": None, "top_bucket": None, "top_price": None, "n": 0, "bucket_labels": [], "bucket_prices": [], "top_bucket_index": None}
+        return {
+            "implied": None,
+            "top_bucket": None,
+            "top_price": None,
+            "n": 0,
+            "bucket_labels": [],
+            "bucket_prices": [],
+            "top_bucket_index": None,
+            "bucket_unit": None,
+        }
 
     rows_sorted = sorted(rows, key=lambda x: x[2])
     top_bucket, top_price, _ = max(rows, key=lambda x: x[1])
@@ -383,4 +415,5 @@ async def fetch_polymarket_implied(event_slug: str, target: date) -> dict:
         "bucket_labels": [r[0] for r in rows_sorted],
         "bucket_prices": [round(r[1], 4) for r in rows_sorted],
         "top_bucket_index": top_bucket_index,
+        "bucket_unit": infer_bucket_unit([r[0] for r in rows_sorted]),
     }

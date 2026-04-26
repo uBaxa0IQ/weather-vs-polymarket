@@ -468,17 +468,17 @@ function MarketDetail({ slug, market }) {
                         paddingAngle={1}
                         stroke="none"
                       >
-                        {distributionRows.map((row, i) => (
-                          <Cell key={row.label} fill={DIST_COLORS[i % DIST_COLORS.length]} opacity={row.isTop ? 1 : 0.8} />
+                        {distributionRows.map((row) => (
+                          <Cell key={row.label} fill={DIST_COLORS[row.idx % DIST_COLORS.length]} opacity={row.isTop ? 1 : 0.8} />
                         ))}
                       </Pie>
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
                 <div className="dist-mini-list">
-                  {distributionRows.slice().sort((a, b) => b.prob - a.prob).slice(0, 5).map((row, i) => (
+                  {distributionRows.slice().sort((a, b) => b.prob - a.prob).slice(0, 5).map((row) => (
                     <div key={`${row.label}-${row.idx}`} className={`dist-mini-row${row.isTop ? " top" : ""}`}>
-                      <span className="dist-color" style={{ background: DIST_COLORS[i % DIST_COLORS.length] }} />
+                      <span className="dist-color" style={{ background: DIST_COLORS[row.idx % DIST_COLORS.length] }} />
                       <span className="dist-label">{row.label}</span>
                       <span className="dist-prob">{(row.prob * 100).toFixed(1)}%</span>
                     </div>

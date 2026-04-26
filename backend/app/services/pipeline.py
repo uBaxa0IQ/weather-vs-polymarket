@@ -22,6 +22,28 @@ from app.services.external import (
 logger = logging.getLogger(__name__)
 
 
+def _c_to_f(value: float) -> float:
+    return value * 9.0 / 5.0 + 32.0
+
+
+def _f_to_c(value: float) -> float:
+    return (value - 32.0) * 5.0 / 9.0
+
+
+def _convert_temp(value: float | None, src_unit: str, dst_unit: str) -> float | None:
+    if value is None:
+        return None
+    src = (src_unit or "").upper()
+    dst = (dst_unit or "").upper()
+    if src == dst:
+        return value
+    if src == "C" and dst == "F":
+        return round(_c_to_f(value), 2)
+    if src == "F" and dst == "C":
+        return round(_f_to_c(value), 2)
+    return value
+
+
 async def bootstrap_cities() -> None:
     requested = [c.strip() for c in settings.tracked_cities.split(",") if c.strip()]
     events = await enrich_events_with_station_and_tz(await fetch_active_high_temp_events())
@@ -166,6 +188,7 @@ async def collect_hourly_snapshots() -> None:
                 "bucket_labels": [],
                 "bucket_prices": [],
                 "top_bucket_index": None,
+                "bucket_unit": None,
             }
 
             try:
@@ -186,6 +209,12 @@ async def collect_hourly_snapshots() -> None:
                 poly = await fetch_polymarket_implied(market.event_slug, market.target_date_local)
             except Exception:
                 logger.exception("polymarket fetch failed for %s", market.event_slug)
+
+            # Align weather model temps to polymarket bucket unit when known.
+            bucket_unit = (poly.get("bucket_unit") or city.temp_unit or "C").upper()
+            source_unit = (city.temp_unit or "C").upper()
+            tomorrow_val = _convert_temp(tomorrow_val, source_unit, bucket_unit)
+            ecmwf_val = _convert_temp(ecmwf_val, source_unit, bucket_unit)
 
             now_utc = datetime.now(timezone.utc)
             time_to_resolve_h = (market.nominal_resolve_at_utc - now_utc).total_seconds() / 3600
