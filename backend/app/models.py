@@ -38,6 +38,12 @@ class Market(Base):
     nominal_resolve_at_utc: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     created_at_utc: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), server_default="NOW()")
+    # Real Polymarket (UMA) resolution — complementary to nominal_resolve / status rotation.
+    pm_resolved_at_utc: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    pm_winning_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pm_winning_bucket_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pm_resolution_checked_at_utc: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    pm_resolution_meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     city: Mapped[City] = relationship("City", back_populates="markets")
     snapshots: Mapped[list[MarketSnapshot]] = relationship("MarketSnapshot", back_populates="market")

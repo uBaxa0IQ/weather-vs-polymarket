@@ -324,6 +324,16 @@ body {
   max-width: 100%;
 }
 
+.card-pm-outcome {
+  font-size: 10px;
+  color: var(--teal);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .card-status {
   display: inline-flex;
   align-items: center;

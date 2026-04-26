@@ -268,9 +268,14 @@ function MarketCard({ market, selected, onClick }) {
         <span className="card-date">{fmtDate(market.target_date_local)}</span>
       </div>
       <div className="card-slug">{market.event_slug}</div>
+      {market.pm_winning_label && (
+        <div className="card-pm-outcome" title="Polymarket (UMA) resolved outcome">
+          PM: {market.pm_winning_label}
+        </div>
+      )}
       <div className={`card-status ${market.status}`}>
         <span className="dot" />
-        {isTracking ? "Tracking" : "Resolved"}
+        {isTracking ? "Tracking" : "Nominal resolved"}
       </div>
     </button>
   );
@@ -412,8 +417,14 @@ function MarketDetail({ slug, market }) {
               <>
                 <span className="meta-chip">{market.city_slug}</span>
                 <span className={`meta-chip ${market.status === "tracking" ? "green" : "dim"}`}>
-                  {market.status === "tracking" ? "● Tracking" : "○ Resolved"}
+                  {market.status === "tracking" ? "● Tracking" : "○ Nominal resolved"}
                 </span>
+                {market.pm_winning_label && (
+                  <span className="meta-chip" title="Official Polymarket / UMA outcome">
+                    PM outcome: {market.pm_winning_label}
+                    {market.pm_winning_bucket_index != null ? ` (#${market.pm_winning_bucket_index})` : ""}
+                  </span>
+                )}
                 <span className="meta-chip">Target: {fmtDate(market.target_date_local)}</span>
                 {hoursLeft !== null && (
                   <span className="meta-chip">{hoursLeft}h to resolve</span>

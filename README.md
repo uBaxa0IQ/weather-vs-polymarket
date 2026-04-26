@@ -9,6 +9,9 @@ FastAPI + React project for continuous analysis of Polymarket high-temperature m
   - one market is assigned per city,
   - market remains tracked until local target day ends,
   - then city rotates to next market.
+- **Two resolution layers** (independent):
+  - **Nominal** — `nominal_resolve_at_utc` (end of the local target day) and `status: nominally_resolved` when the pipeline rotates the city to the next event.
+  - **Polymarket (UMA)** — `pm_*` columns on `markets` when the official Gamma/CTF outcome is available (submarket with Yes ≈ 1.0 for the winning temperature bucket). The worker reconciles this after each pipeline run for markets that are nominally resolved but not yet `pm_resolved_at_utc`.
 - Hourly ingestion for tracked markets:
   - Tomorrow max forecast,
   - ECMWF max forecast,
@@ -38,10 +41,26 @@ py -m venv .venv
 pip install -r requirements.txt
 copy .env.example .env
 # set TOMORROW_API_KEY in .env
+# optional: align Alembic version table (schema also applied on app startup via sql/schema.sql)
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 # in second shell start scheduler worker:
 python -m app.worker
 ```
+
+## Database migrations (Alembic)
+
+Migrations live under `backend/alembic/`. The app still applies `sql/schema.sql` on startup (idempotent), and Alembic revision `20260427_0001` adds Polymarket resolution columns in an idempotent way if they are missing.
+
+```bash
+cd backend
+# DATABASE_URL in .env or default from alembic.ini
+alembic upgrade head
+```
+
+On a server that only ever used `sql/schema.sql`, you can either run `alembic upgrade head` or, if the columns already exist, `alembic stamp 20260427_0001` to record the current revision without re-running DDL.
+
+**Docker:** `docker compose exec backend alembic upgrade head` (from the repo root, with `backend` as workdir in the image: `/app`).
 
 ## Run frontend
 

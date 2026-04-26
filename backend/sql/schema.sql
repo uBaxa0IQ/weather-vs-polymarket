@@ -72,3 +72,10 @@ CREATE TABLE IF NOT EXISTS scheduler_state (
   next_run_at_utc TIMESTAMPTZ NOT NULL,
   updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Real Polymarket (UMA) resolution; complements nominal_resolve_at_utc and status.
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_resolved_at_utc TIMESTAMPTZ;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_winning_label TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_winning_bucket_index INTEGER;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_resolution_checked_at_utc TIMESTAMPTZ;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_resolution_meta JSONB;

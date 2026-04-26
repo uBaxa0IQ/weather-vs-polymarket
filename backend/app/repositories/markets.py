@@ -18,6 +18,9 @@ async def list_markets(
             Market.target_date_local,
             Market.status,
             Market.nominal_resolve_at_utc,
+            Market.pm_resolved_at_utc,
+            Market.pm_winning_label,
+            Market.pm_winning_bucket_index,
             City.city_slug,
         )
         .join(City)

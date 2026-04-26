@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import desc, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
@@ -15,6 +15,7 @@ from app.services.external import (
     fetch_active_high_temp_events,
     fetch_ecmwf_max,
     fetch_polymarket_implied,
+    fetch_polymarket_resolution,
     fetch_tomorrow_max,
     target_date_to_resolve_utc,
 )
@@ -251,6 +252,74 @@ async def collect_hourly_snapshots() -> None:
             logger.exception("snapshot failed for %s", market.event_slug)
 
 
+async def reconcile_polymarket_resolutions() -> None:
+    """
+    After nominal_resolve / nominally_resolved, Polymarket (UMA) may resolve later.
+    Fetches Gamma event, finds the bucket submarket with Yes ≈ 1, stores winning label.
+    """
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(
+            select(Market)
+            .where(
+                Market.status == "nominally_resolved",
+                Market.pm_resolved_at_utc.is_(None),
+            )
+            .order_by(Market.id)
+        )
+        pending = list(result.scalars().all())
+
+    now_utc = datetime.now(timezone.utc)
+    for market in pending:
+        try:
+            res = await fetch_polymarket_resolution(market.event_slug, market.target_date_local)
+            if not res.get("resolved") or not res.get("winning_label"):
+                async with factory() as session:
+                    await session.execute(
+                        update(Market)
+                        .where(Market.id == market.id)
+                        .values(
+                            pm_resolution_checked_at_utc=now_utc,
+                            pm_resolution_meta={"event_closed": res.get("event_closed")},
+                        )
+                    )
+                    await session.commit()
+                continue
+
+            winning = str(res["winning_label"])
+            idx: int | None = None
+            async with factory() as session:
+                row = await session.execute(
+                    select(MarketSnapshot.bucket_labels_json)
+                    .where(MarketSnapshot.market_id == market.id)
+                    .order_by(desc(MarketSnapshot.captured_at_utc))
+                    .limit(1)
+                )
+                one = row.first()
+                labels = one[0] if one else None
+                if isinstance(labels, list) and winning in labels:
+                    idx = int(labels.index(winning))
+
+            async with factory() as session:
+                await session.execute(
+                    update(Market)
+                    .where(Market.id == market.id)
+                    .values(
+                        pm_resolved_at_utc=now_utc,
+                        pm_winning_label=winning,
+                        pm_winning_bucket_index=idx,
+                        pm_resolution_checked_at_utc=now_utc,
+                        pm_resolution_meta={
+                            "event_closed": res.get("event_closed"),
+                            "winning_market_slug": res.get("winning_market_slug"),
+                        },
+                    )
+                )
+                await session.commit()
+        except Exception:
+            logger.exception("polymarket resolution reconcile failed for %s", market.event_slug)
+
+
 async def run_pipeline_once(triggered_by: str = "scheduler") -> None:
     factory = get_session_factory()
     started = datetime.now(timezone.utc)
@@ -270,6 +339,7 @@ async def run_pipeline_once(triggered_by: str = "scheduler") -> None:
         await bootstrap_cities()
         await assign_or_rotate_markets()
         await collect_hourly_snapshots()
+        await reconcile_polymarket_resolutions()
     except Exception as exc:
         pipeline_status = "error"
         err = str(exc)

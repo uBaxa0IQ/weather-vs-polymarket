@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
 import logging
 import math
 import random
@@ -416,4 +417,78 @@ async def fetch_polymarket_implied(event_slug: str, target: date) -> dict:
         "bucket_prices": [round(r[1], 4) for r in rows_sorted],
         "top_bucket_index": top_bucket_index,
         "bucket_unit": infer_bucket_unit([r[0] for r in rows_sorted]),
+    }
+
+
+def _parse_json_list_field(raw: object) -> list:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        try:
+            v = json.loads(s)
+        except json.JSONDecodeError:
+            return []
+        return v if isinstance(v, list) else []
+    return []
+
+
+def _outcome_yes_won(market: dict) -> bool:
+    """For standard Yes/No submarkets: Yes is index 0."""
+    prices_raw = _parse_json_list_field(market.get("outcomePrices"))
+    if not prices_raw:
+        return False
+    try:
+        yes = float(str(prices_raw[0]).strip())
+    except (TypeError, ValueError, IndexError):
+        return False
+    return yes >= 0.99
+
+
+async def fetch_polymarket_resolution(event_slug: str, target: date) -> dict:
+    """
+    Detect official Polymarket resolution for the target date's bucket markets.
+    Complements our nominal_resolve_at_utc (local end-of-day): UMA can resolve later.
+    """
+    date_frag = _slug_date(target)
+    q = urllib.parse.urlencode({"slug": event_slug, "limit": 5})
+    data = await _get_json(f"{GAMMA_EVENTS_URL}?{q}")
+    if not isinstance(data, list) or not data:
+        return {
+            "resolved": False,
+            "winning_label": None,
+            "event_closed": None,
+            "winning_market_slug": None,
+        }
+
+    evt = data[0]
+    markets = evt.get("markets", []) or []
+    event_closed = bool(evt.get("closed", False))
+
+    winning_label: str | None = None
+    winning_slug: str | None = None
+    for m in markets:
+        if not isinstance(m, dict):
+            continue
+        mslug = str(m.get("slug") or "")
+        if date_frag not in mslug:
+            continue
+        label = mslug.split(f"on-{date_frag}-")[-1] if f"on-{date_frag}-" in mslug else mslug
+        if not _outcome_yes_won(m):
+            continue
+        if winning_label is not None and winning_label != label:
+            logger.warning("multiple PM Yes winners for %s on %s: %r vs %r", event_slug, date_frag, winning_label, label)
+        winning_label = label
+        winning_slug = mslug
+
+    resolved = winning_label is not None
+    return {
+        "resolved": resolved,
+        "winning_label": winning_label,
+        "event_closed": event_closed,
+        "winning_market_slug": winning_slug,
     }
