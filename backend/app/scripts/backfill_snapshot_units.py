@@ -90,23 +90,54 @@ def _other_unit(unit: str) -> str:
     return "F" if unit == "C" else "C"
 
 
+def _bucket_center(lo: float | None, hi: float | None) -> float | None:
+    if lo is not None and hi is not None:
+        return (lo + hi) / 2.0
+    if lo is None and hi is not None:
+        return hi - 1.0
+    if lo is not None and hi is None:
+        return lo + 1.0
+    return None
+
+
 def _pick_value_for_bucket(value: float | None, bucket_unit: str, lo: float | None, hi: float | None) -> float | None:
     if value is None:
         return None
     if _in_bucket_range(value, lo, hi):
         return value
 
+    # Explore short conversion chains and pick a candidate that lands in bucket range.
+    # This fixes values that were converted multiple times by prior buggy backfill runs.
     opposite = _other_unit(bucket_unit)
-    # Candidate A: value is in opposite unit and needs conversion into bucket unit.
-    cand_from_opposite = _convert_temp(value, opposite, bucket_unit)
-    if _in_bucket_range(cand_from_opposite, lo, hi):
-        return cand_from_opposite
+    center = _bucket_center(lo, hi)
+    frontier: list[tuple[float, int]] = [(value, 0)]
+    seen = {round(value, 4)}
+    valid: list[tuple[float, int, float]] = []
 
-    # Candidate B: value was already converted once in the same direction by mistake.
-    # Reverse numerically to get back to plausible bucket-scale value.
-    cand_reverse = _convert_temp(value, bucket_unit, opposite)
-    if _in_bucket_range(cand_reverse, lo, hi):
-        return cand_reverse
+    while frontier:
+        current, depth = frontier.pop(0)
+        if _in_bucket_range(current, lo, hi):
+            score = abs(current - center) if center is not None else 0.0
+            valid.append((current, depth, score))
+            continue
+        if depth >= 4:
+            continue
+
+        next_a = _convert_temp(current, opposite, bucket_unit)
+        next_b = _convert_temp(current, bucket_unit, opposite)
+        for nxt in (next_a, next_b):
+            if nxt is None:
+                continue
+            key = round(nxt, 4)
+            if key in seen:
+                continue
+            seen.add(key)
+            frontier.append((nxt, depth + 1))
+
+    if valid:
+        # Prefer shortest path, then closest to bucket center.
+        valid.sort(key=lambda x: (x[1], x[2]))
+        return valid[0][0]
 
     return value
 
