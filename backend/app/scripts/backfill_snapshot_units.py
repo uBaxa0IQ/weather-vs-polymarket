@@ -48,7 +48,7 @@ class BackfillStats:
 
 def _parse_bounds(label: str) -> tuple[float | None, float | None]:
     s = str(label or "").lower().replace("deg", "").replace(" ", "")
-    nums = [int(x) for x in re.findall(r"-?\d+", s)]
+    nums = [int(x) for x in re.findall(r"(?<!\d)-?\d+", s)]
     if "orbelow" in s and nums:
         return (None, float(nums[0]))
     if "orhigher" in s and nums:

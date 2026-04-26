@@ -61,12 +61,26 @@ function fmtRelative(iso) {
 
 function parseBucket(label) {
   const s = String(label || "").toLowerCase().replace("deg", "").replace(/\s+/g, "");
-  const nums = (s.match(/-?\d+/g) || []).map(Number);
+  const nums = [...s.matchAll(/(^|[^\d])(-?\d+)/g)].map((m) => Number(m[2]));
   if (s.includes("orbelow")) return { lo: null, hi: nums.length ? nums[0] : null };
   if (s.includes("orhigher")) return { lo: nums.length ? nums[0] : null, hi: null };
   if (nums.length >= 2) return { lo: Math.min(nums[0], nums[1]), hi: Math.max(nums[0], nums[1]) };
   if (nums.length === 1) return { lo: nums[0], hi: nums[0] };
   return { lo: null, hi: null };
+}
+
+function inferBucketUnit(labels) {
+  for (const label of labels || []) {
+    const s = String(label || "").toLowerCase().replace(/\s+/g, "");
+    if (/-?\d+f(?:or|$|[^a-z])/.test(s)) return "F";
+    if (/-?\d+c(?:or|$|[^a-z])/.test(s)) return "C";
+  }
+  return null;
+}
+
+function fmtTemp(value, unit) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "—";
+  return `${value.toFixed(1)}${unit ? `°${unit}` : ""}`;
 }
 
 function bucketBounds(labels, idx) {
@@ -115,7 +129,7 @@ function bucketIndexForTemp(temp, labels) {
 
 // ─── Custom Recharts tooltip ─────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload, label, labelFormatter }) {
+function ChartTooltip({ active, payload, label, labelFormatter, valueFormatter }) {
   if (!active || !payload?.length) return null;
   const displayLabel = labelFormatter ? labelFormatter(label) : label;
   return (
@@ -126,7 +140,9 @@ function ChartTooltip({ active, payload, label, labelFormatter }) {
           <span className="chart-tooltip-dot" style={{ background: entry.color }} />
           <span style={{ color: "var(--text-2)" }}>{entry.name}</span>
           <strong style={{ color: "var(--text-1)", marginLeft: "auto", paddingLeft: 12 }}>
-            {typeof entry.value === "number" ? entry.value.toFixed(2) : entry.value ?? "—"}
+            {valueFormatter
+              ? valueFormatter(entry.value)
+              : (typeof entry.value === "number" ? entry.value.toFixed(2) : entry.value ?? "—")}
           </strong>
         </div>
       ))}
@@ -349,6 +365,10 @@ function MarketDetail({ slug, market }) {
       ?? timeseries[timeseries.length - 1]
     );
   }, [timeseries, selectedSnapshotTime]);
+  const selectedUnit = useMemo(
+    () => inferBucketUnit(selectedSnapshot?.bucket_labels_json || []),
+    [selectedSnapshot],
+  );
   const distributionRows = useMemo(() => {
     const labels = selectedSnapshot?.bucket_labels_json || [];
     const prices = selectedSnapshot?.bucket_prices_json || [];
@@ -408,7 +428,9 @@ function MarketDetail({ slug, market }) {
       <div className="card">
         <div className="card-header">
           <span className="card-title">Forecast timeseries</span>
-          <span className="card-subtitle">Tomorrow · ECMWF · Poly implied · Top-1 bucket temperature</span>
+          <span className="card-subtitle">
+            {`Tomorrow · ECMWF · Poly implied · Top-1 bucket temperature${selectedUnit ? ` (°${selectedUnit})` : ""}`}
+          </span>
         </div>
         <div className="card-body market-forecast-layout">
           <div className="chart-wrap-tall">
@@ -420,7 +442,7 @@ function MarketDetail({ slug, market }) {
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
                   <XAxis dataKey="captured_at_utc" hide />
                   <YAxis yAxisId="temp" {...axisProps()} />
-                  <Tooltip content={<ChartTooltip labelFormatter={fmtDateTime} />} />
+                  <Tooltip content={<ChartTooltip labelFormatter={fmtDateTime} valueFormatter={(v) => fmtTemp(v, selectedUnit)} />} />
                   <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
                   <Line yAxisId="temp" type="monotone" dataKey="tomorrow_max" stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
                   <Line yAxisId="temp" type="monotone" dataKey="ecmwf_max" stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
@@ -506,7 +528,7 @@ function MarketDetail({ slug, market }) {
       <div className="card">
         <div className="card-header">
           <span className="card-title">Snapshots</span>
-          <span className="card-subtitle">last 120</span>
+          <span className="card-subtitle">{`last 120${selectedUnit ? ` · unit °${selectedUnit}` : ""}`}</span>
         </div>
         {loading ? (
           <div className="skeleton" style={{ height: 120, margin: 16, borderRadius: 4 }} />
@@ -530,9 +552,9 @@ function MarketDetail({ slug, market }) {
                     onClick={() => setSelectedSnapshotTime(r.captured_at_utc)}
                   >
                     <td className="td-time">{fmtDateTime(r.captured_at_utc)}</td>
-                    <td className="td-num">{r.tomorrow_max?.toFixed(1) ?? "—"}</td>
-                    <td className="td-num">{r.ecmwf_max?.toFixed(1) ?? "—"}</td>
-                    <td className="td-num">{r.poly_implied?.toFixed(1) ?? "—"}</td>
+                    <td className="td-num">{fmtTemp(r.tomorrow_max, selectedUnit)}</td>
+                    <td className="td-num">{fmtTemp(r.ecmwf_max, selectedUnit)}</td>
+                    <td className="td-num">{fmtTemp(r.poly_implied, selectedUnit)}</td>
                     <td style={{ color: "var(--text-2)", fontSize: 11 }}>{r.top_bucket ?? "—"}</td>
                   </tr>
                 ))}

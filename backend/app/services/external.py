@@ -130,7 +130,7 @@ def _slug_date(d: date) -> str:
 
 def _parse_bucket(label: str) -> tuple[float | None, float | None]:
     s = label.lower().replace("deg", "").replace(" ", "")
-    nums = [int(x) for x in re.findall(r"-?\d+", s)]
+    nums = [int(x) for x in re.findall(r"(?<!\d)-?\d+", s)]
     if "orbelow" in s:
         return (None, float(nums[0])) if nums else (None, None)
     if "orhigher" in s:

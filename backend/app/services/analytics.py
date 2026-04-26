@@ -8,7 +8,7 @@ from typing import Any
 
 def parse_bucket_bounds(label: str) -> tuple[float, float]:
     s = label.lower().replace("deg", "").replace(" ", "")
-    nums = [int(x) for x in re.findall(r"-?\d+", s)]
+    nums = [int(x) for x in re.findall(r"(?<!\d)-?\d+", s)]
     if "orbelow" in s and nums:
         return (-inf, float(nums[0]))
     if "orhigher" in s and nums:
