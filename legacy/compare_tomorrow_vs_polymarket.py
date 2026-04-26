@@ -215,8 +215,12 @@ def _fmt_diff(a: float | None, b: float | None, unit: str) -> str:
 
 def main() -> int:
     tf = TimezoneFinder()
+    city_key = "munich"
+    city = CITIES.get(city_key)
+    if city is None:
+        raise KeyError(f"City '{city_key}' not found in CITIES")
     
-    print("Fetching forecasts strictly for the NEXT LOCAL DAY of each city...\n")
+    print("Fetching forecasts strictly for the NEXT LOCAL DAY of Munich...\n")
     
     # Добавил колонку 'Date', чтобы было видно, на какую дату делается прогноз в каждом городе
     print(
@@ -224,39 +228,38 @@ def main() -> int:
     )
     print("-" * 96)
 
-    for city_key, city in CITIES.items():
-        lat = city["lat"]
-        lon = city["lon"]
-        unit = city["unit"]
-        slug = city["slug"]
-        
-        # 1. Находим таймзону по координатам
-        tz_name = tf.timezone_at(lng=lon, lat=lat)
-        if not tz_name:
-            tz_name = "UTC" # Фолбек, если координаты упали в океан
+    lat = city["lat"]
+    lon = city["lon"]
+    unit = city["unit"]
+    slug = city["slug"]
+    
+    # 1. Находим таймзону по координатам
+    tz_name = tf.timezone_at(lng=lon, lat=lat)
+    if not tz_name:
+        tz_name = "UTC" # Фолбек, если координаты упали в океан
 
-        # 2. Определяем локальное время города И их "завтра"
-        city_tz = zoneinfo.ZoneInfo(tz_name)
-        city_now = datetime.now(city_tz)
-        city_tomorrow = city_now.date() + timedelta(days=1)
-        target_str = str(city_tomorrow)
+    # 2. Определяем локальное время города И их "завтра"
+    city_tz = zoneinfo.ZoneInfo(tz_name)
+    city_now = datetime.now(city_tz)
+    city_tomorrow = city_now.date() + timedelta(days=1)
+    target_str = str(city_tomorrow)
 
-        # 3. Делаем запросы (передаем tz_name в API)
-        tomorrow_val = fetch_tomorrow_max(lat, lon, unit, target_str, tz_name)
-        ecmwf_val = fetch_ecmwf_max(lat, lon, unit, target_str, tz_name)
-        poly = fetch_polymarket_implied(slug, city_tomorrow)
+    # 3. Делаем запросы (передаем tz_name в API)
+    tomorrow_val = fetch_tomorrow_max(lat, lon, unit, target_str, tz_name)
+    ecmwf_val = fetch_ecmwf_max(lat, lon, unit, target_str, tz_name)
+    poly = fetch_polymarket_implied(slug, city_tomorrow)
 
-        print(
-            f"{city_key:<12} "
-            f"{target_str:<10} "
-            f"{_fmt_num(tomorrow_val, unit):>10} "
-            f"{_fmt_num(ecmwf_val, unit):>10} "
-            f"{_fmt_diff(tomorrow_val, ecmwf_val, unit):>9} "
-            f"{_fmt_num(poly['implied'], unit):>10} "
-            f"{str(poly['top_bucket'] or 'N/A')[:14]:>14} "
-            f"{(f'{poly['top_price']:.4f}' if poly['top_price'] is not None else 'N/A'):>8} "
-            f"{poly['n']:>4}"
-        )
+    print(
+        f"{city_key:<12} "
+        f"{target_str:<10} "
+        f"{_fmt_num(tomorrow_val, unit):>10} "
+        f"{_fmt_num(ecmwf_val, unit):>10} "
+        f"{_fmt_diff(tomorrow_val, ecmwf_val, unit):>9} "
+        f"{_fmt_num(poly['implied'], unit):>10} "
+        f"{str(poly['top_bucket'] or 'N/A')[:14]:>14} "
+        f"{(f'{poly['top_price']:.4f}' if poly['top_price'] is not None else 'N/A'):>8} "
+        f"{poly['n']:>4}"
+    )
 
     return 0
 
