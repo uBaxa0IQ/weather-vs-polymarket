@@ -437,14 +437,15 @@ body {
 }
 
 .chart-wrap-tall {
-  height: 260px;
+  min-height: 260px;
+  height: 100%;
 }
 
 .market-forecast-layout {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 @media (max-width: 1200px) {
