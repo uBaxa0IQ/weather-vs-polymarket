@@ -62,6 +62,8 @@ On a server that only ever used `sql/schema.sql`, you can either run `alembic up
 
 **Docker:** `docker compose exec backend alembic upgrade head` (from the repo root, with `backend` as workdir in the image: `/app`).
 
+The **backend** container runs `alembic upgrade head` automatically on start (`docker-entrypoint.sh`) before `uvicorn`, so a plain `docker compose up --build` applies migrations. The **worker** overrides the entrypoint and does not run Alembic; it waits for the backend healthcheck so migrations have finished.
+
 ## Run frontend
 
 ```bash
