@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import dataclass
+import re
 
 from sqlalchemy import select, update
 
 from app.database import close_db, get_session_factory, init_db
-from app.models import City, Market, MarketSnapshot
+from app.models import Market, MarketSnapshot
 from app.services.external import infer_bucket_unit
 
 
@@ -41,7 +42,73 @@ class BackfillStats:
     changed_ecmwf: int = 0
     skipped_no_labels: int = 0
     skipped_unknown_bucket_unit: int = 0
-    skipped_same_unit: int = 0
+    unchanged_in_range: int = 0
+    unchanged_ambiguous: int = 0
+
+
+def _parse_bounds(label: str) -> tuple[float | None, float | None]:
+    s = str(label or "").lower().replace("deg", "").replace(" ", "")
+    nums = [int(x) for x in re.findall(r"-?\d+", s)]
+    if "orbelow" in s and nums:
+        return (None, float(nums[0]))
+    if "orhigher" in s and nums:
+        return (float(nums[0]), None)
+    if len(nums) >= 2:
+        lo, hi = nums[0], nums[1]
+        return (float(min(lo, hi)), float(max(lo, hi)))
+    if len(nums) == 1:
+        n = float(nums[0])
+        return (n, n)
+    return (None, None)
+
+
+def _bucket_finite_range(labels: list[str]) -> tuple[float | None, float | None]:
+    lows: list[float] = []
+    highs: list[float] = []
+    for label in labels:
+        lo, hi = _parse_bounds(label)
+        if lo is not None:
+            lows.append(lo)
+        if hi is not None:
+            highs.append(hi)
+    lo = min(lows) if lows else None
+    hi = max(highs) if highs else None
+    return (lo, hi)
+
+
+def _in_bucket_range(value: float | None, lo: float | None, hi: float | None, pad: float = 10.0) -> bool:
+    if value is None:
+        return False
+    if lo is not None and value < lo - pad:
+        return False
+    if hi is not None and value > hi + pad:
+        return False
+    return True
+
+
+def _other_unit(unit: str) -> str:
+    return "F" if unit == "C" else "C"
+
+
+def _pick_value_for_bucket(value: float | None, bucket_unit: str, lo: float | None, hi: float | None) -> float | None:
+    if value is None:
+        return None
+    if _in_bucket_range(value, lo, hi):
+        return value
+
+    opposite = _other_unit(bucket_unit)
+    # Candidate A: value is in opposite unit and needs conversion into bucket unit.
+    cand_from_opposite = _convert_temp(value, opposite, bucket_unit)
+    if _in_bucket_range(cand_from_opposite, lo, hi):
+        return cand_from_opposite
+
+    # Candidate B: value was already converted once in the same direction by mistake.
+    # Reverse numerically to get back to plausible bucket-scale value.
+    cand_reverse = _convert_temp(value, bucket_unit, opposite)
+    if _in_bucket_range(cand_reverse, lo, hi):
+        return cand_reverse
+
+    return value
 
 
 async def run_backfill(dry_run: bool) -> BackfillStats:
@@ -56,10 +123,8 @@ async def run_backfill(dry_run: bool) -> BackfillStats:
                 MarketSnapshot.bucket_labels_json,
                 MarketSnapshot.tomorrow_max,
                 MarketSnapshot.ecmwf_max,
-                City.temp_unit,
             )
             .join(Market, Market.id == MarketSnapshot.market_id)
-            .join(City, City.id == Market.city_id)
             .order_by(MarketSnapshot.captured_at_utc.asc())
         )
         result = await session.execute(q)
@@ -77,13 +142,9 @@ async def run_backfill(dry_run: bool) -> BackfillStats:
                 stats.skipped_unknown_bucket_unit += 1
                 continue
 
-            source_unit = (row.temp_unit or "C").upper()
-            if source_unit == bucket_unit:
-                stats.skipped_same_unit += 1
-                continue
-
-            new_tomorrow = _convert_temp(row.tomorrow_max, source_unit, bucket_unit)
-            new_ecmwf = _convert_temp(row.ecmwf_max, source_unit, bucket_unit)
+            lo, hi = _bucket_finite_range(labels)
+            new_tomorrow = _pick_value_for_bucket(row.tomorrow_max, bucket_unit, lo, hi)
+            new_ecmwf = _pick_value_for_bucket(row.ecmwf_max, bucket_unit, lo, hi)
 
             tomorrow_changed = (
                 row.tomorrow_max is not None and new_tomorrow is not None and new_tomorrow != row.tomorrow_max
@@ -92,6 +153,10 @@ async def run_backfill(dry_run: bool) -> BackfillStats:
                 row.ecmwf_max is not None and new_ecmwf is not None and new_ecmwf != row.ecmwf_max
             )
             if not tomorrow_changed and not ecmwf_changed:
+                if _in_bucket_range(row.tomorrow_max, lo, hi) and _in_bucket_range(row.ecmwf_max, lo, hi):
+                    stats.unchanged_in_range += 1
+                else:
+                    stats.unchanged_ambiguous += 1
                 continue
 
             stats.changed_rows += 1
@@ -127,7 +192,8 @@ def _print_stats(stats: BackfillStats, dry_run: bool) -> None:
     print(f"[{mode}] changed_ecmwf={stats.changed_ecmwf}")
     print(f"[{mode}] skipped_no_labels={stats.skipped_no_labels}")
     print(f"[{mode}] skipped_unknown_bucket_unit={stats.skipped_unknown_bucket_unit}")
-    print(f"[{mode}] skipped_same_unit={stats.skipped_same_unit}")
+    print(f"[{mode}] unchanged_in_range={stats.unchanged_in_range}")
+    print(f"[{mode}] unchanged_ambiguous={stats.unchanged_ambiguous}")
 
 
 async def _main_async(dry_run: bool) -> None:
