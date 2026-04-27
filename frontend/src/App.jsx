@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import "./App.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+const API_BASE = import.meta.env.VITE_API_BASE ?? import.meta.env.VITE_API_BASE_URL ?? "";
 
 // ─── HTTP helpers ────────────────────────────────────────────────────────────
 
