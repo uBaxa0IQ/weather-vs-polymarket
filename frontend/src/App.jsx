@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import "./App.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? import.meta.env.VITE_API_BASE_URL ?? "";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 // ─── HTTP helpers ────────────────────────────────────────────────────────────
 
@@ -331,16 +331,6 @@ function MarketDetail({ slug, market }) {
   const [timeseries, setTimeseries] = useState(null);
   const [selectedSnapshotTime, setSelectedSnapshotTime] = useState(null);
   const [error, setError] = useState(null);
-  const [visibleCurves, setVisibleCurves] = useState({
-    tomorrow: true,
-    ecmwf: true,
-    poly: true,
-    topBucket: true,
-  });
-
-  function toggleCurve(key) {
-    setVisibleCurves((prev) => ({ ...prev, [key]: !prev[key] }));
-  }
 
   useEffect(() => {
     if (!slug) return;
@@ -448,18 +438,10 @@ function MarketDetail({ slug, market }) {
 
       <div className="card">
         <div className="card-header">
-          <div>
-            <span className="card-title">Forecast timeseries</span>
-            <span className="card-subtitle" style={{ marginLeft: 10 }}>
-              {`Tomorrow · ECMWF · Poly implied · Top-1 bucket temperature${selectedUnit ? ` (°${selectedUnit})` : ""}`}
-            </span>
-          </div>
-          <div className="curve-toggles">
-            <button className={`curve-toggle ${visibleCurves.tomorrow ? "on" : ""}`} onClick={() => toggleCurve("tomorrow")}>Tomorrow</button>
-            <button className={`curve-toggle ${visibleCurves.ecmwf ? "on" : ""}`} onClick={() => toggleCurve("ecmwf")}>ECMWF</button>
-            <button className={`curve-toggle ${visibleCurves.poly ? "on" : ""}`} onClick={() => toggleCurve("poly")}>Poly</button>
-            <button className={`curve-toggle ${visibleCurves.topBucket ? "on" : ""}`} onClick={() => toggleCurve("topBucket")}>Top-1</button>
-          </div>
+          <span className="card-title">Forecast timeseries</span>
+          <span className="card-subtitle">
+            {`Tomorrow · ECMWF · Poly implied · Top-1 bucket temperature${selectedUnit ? ` (°${selectedUnit})` : ""}`}
+          </span>
         </div>
         <div className="card-body market-forecast-layout">
           <div className="chart-wrap-tall">
@@ -473,26 +455,18 @@ function MarketDetail({ slug, market }) {
                   <YAxis yAxisId="temp" {...axisProps()} />
                   <Tooltip content={<ChartTooltip labelFormatter={fmtDateTime} valueFormatter={(v) => fmtTemp(v, selectedUnit)} />} />
                   <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-                  {visibleCurves.tomorrow && (
-                    <Line yAxisId="temp" type="monotone" dataKey="tomorrow_max" stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
-                  )}
-                  {visibleCurves.ecmwf && (
-                    <Line yAxisId="temp" type="monotone" dataKey="ecmwf_max" stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
-                  )}
-                  {visibleCurves.poly && (
-                    <Line yAxisId="temp" type="monotone" dataKey="poly_implied" stroke={CHART_THEME.poly} dot={false} name="Poly implied" strokeWidth={2} />
-                  )}
-                  {visibleCurves.topBucket && (
-                    <Line
-                      yAxisId="temp"
-                      type="monotone"
-                      dataKey="top_bucket_value"
-                      stroke={CHART_THEME.topBucketValue}
-                      dot={false}
-                      name="Top-1 bucket temp"
-                      strokeWidth={2}
-                    />
-                  )}
+                  <Line yAxisId="temp" type="monotone" dataKey="tomorrow_max" stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
+                  <Line yAxisId="temp" type="monotone" dataKey="ecmwf_max" stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
+                  <Line yAxisId="temp" type="monotone" dataKey="poly_implied" stroke={CHART_THEME.poly} dot={false} name="Poly implied" strokeWidth={2} />
+                  <Line
+                    yAxisId="temp"
+                    type="monotone"
+                    dataKey="top_bucket_value"
+                    stroke={CHART_THEME.topBucketValue}
+                    dot={false}
+                    name="Top-1 bucket temp"
+                    strokeWidth={2}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             ) : (

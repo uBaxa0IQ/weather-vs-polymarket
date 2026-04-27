@@ -383,8 +383,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .card-title {
@@ -396,28 +394,6 @@ body {
 .card-subtitle {
   font-size: 11px;
   color: var(--text-2);
-}
-
-.curve-toggles {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.curve-toggle {
-  border: 1px solid var(--border);
-  background: var(--bg-1);
-  color: var(--text-2);
-  border-radius: 999px;
-  font-size: 11px;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-
-.curve-toggle.on {
-  color: var(--text-1);
-  border-color: var(--blue);
-  background: rgba(88, 166, 255, 0.14);
 }
 
 .card-body {
