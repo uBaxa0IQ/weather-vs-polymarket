@@ -343,12 +343,6 @@ function MarketDetail({ slug, market }) {
     setTimeseries(null);
     setSelectedSnapshotTime(null);
     setError(null);
-    setVisibleSeries({
-      tomorrow: true,
-      ecmwf: true,
-      poly: true,
-      topBucket: true,
-    });
     apiFetch(`/markets/${encodeURIComponent(slug)}/timeseries`)
       .then((ts) => {
         setTimeseries(ts);
