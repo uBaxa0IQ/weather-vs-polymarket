@@ -132,10 +132,15 @@ function bucketIndexForTemp(temp, labels) {
 function ChartTooltip({ active, payload, label, labelFormatter, valueFormatter }) {
   if (!active || !payload?.length) return null;
   const displayLabel = labelFormatter ? labelFormatter(label) : label;
+  const sortedPayload = [...payload].sort((a, b) => {
+    const av = typeof a?.value === "number" ? a.value : Number.NEGATIVE_INFINITY;
+    const bv = typeof b?.value === "number" ? b.value : Number.NEGATIVE_INFINITY;
+    return bv - av;
+  });
   return (
     <div className="chart-tooltip">
       {displayLabel && <div className="chart-tooltip-label">{displayLabel}</div>}
-      {payload.map((entry) => (
+      {sortedPayload.map((entry) => (
         <div key={entry.dataKey} className="chart-tooltip-row">
           <span className="chart-tooltip-dot" style={{ background: entry.color }} />
           <span style={{ color: "var(--text-2)" }}>{entry.name}</span>
