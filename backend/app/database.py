@@ -32,6 +32,11 @@ async def init_db() -> None:
 async def _run_schema() -> None:
     schema_path = Path(__file__).resolve().parents[1] / "sql" / "schema.sql"
     sql = schema_path.read_text(encoding="utf-8")
+    # Strip full-line SQL comments before splitting by ";".
+    # Otherwise, semicolons inside comments produce invalid fragments.
+    sql_without_line_comments = "\n".join(
+        line for line in sql.splitlines() if not line.lstrip().startswith("--")
+    )
 
     # Verify TimescaleDB is available
     async with _engine.connect() as conn:
@@ -47,7 +52,7 @@ async def _run_schema() -> None:
     # Run each DDL statement individually so one failure doesn't abort the rest.
     # All IF NOT EXISTS guards make this idempotent on repeated startups.
     async with _engine.connect() as conn:
-        for stmt in (s.strip() for s in sql.split(";") if s.strip()):
+        for stmt in (s.strip() for s in sql_without_line_comments.split(";") if s.strip()):
             try:
                 await conn.execute(text(stmt))
                 await conn.commit()

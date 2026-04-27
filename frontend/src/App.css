@@ -383,6 +383,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
 }
 
 .card-title {
@@ -394,6 +395,41 @@ body {
 .card-subtitle {
   font-size: 11px;
   color: var(--text-2);
+}
+
+.forecast-chart-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.series-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.series-toggle {
+  background: var(--bg-1);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.series-toggle:hover {
+  border-color: var(--text-3);
+  color: var(--text-1);
+}
+
+.series-toggle.active {
+  background: rgba(99,102,241,.15);
+  border-color: var(--indigo);
+  color: var(--text-1);
 }
 
 .card-body {

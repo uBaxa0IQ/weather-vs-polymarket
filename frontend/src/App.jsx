@@ -331,12 +331,24 @@ function MarketDetail({ slug, market }) {
   const [timeseries, setTimeseries] = useState(null);
   const [selectedSnapshotTime, setSelectedSnapshotTime] = useState(null);
   const [error, setError] = useState(null);
+  const [visibleSeries, setVisibleSeries] = useState({
+    tomorrow: true,
+    ecmwf: true,
+    poly: true,
+    topBucket: true,
+  });
 
   useEffect(() => {
     if (!slug) return;
     setTimeseries(null);
     setSelectedSnapshotTime(null);
     setError(null);
+    setVisibleSeries({
+      tomorrow: true,
+      ecmwf: true,
+      poly: true,
+      topBucket: true,
+    });
     apiFetch(`/markets/${encodeURIComponent(slug)}/timeseries`)
       .then((ts) => {
         setTimeseries(ts);
@@ -402,6 +414,9 @@ function MarketDetail({ slug, market }) {
     { key: "E", label: "ECMWF", idx: ecmwfBucketIdx },
     { key: "P", label: "Poly top", idx: polyBucketIdx },
   ];
+  const toggleSeries = (key) => {
+    setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
   const hoursLeft = market?.nominal_resolve_at_utc
     ? ((new Date(market.nominal_resolve_at_utc) - Date.now()) / 3600000).toFixed(1)
     : null;
@@ -438,9 +453,41 @@ function MarketDetail({ slug, market }) {
 
       <div className="card">
         <div className="card-header">
-          <span className="card-title">Forecast timeseries</span>
+          <div className="forecast-chart-header">
+            <span className="card-title">Forecast timeseries</span>
+            <div className="series-toggle-row" aria-label="Toggle chart lines">
+              <button
+                type="button"
+                className={`series-toggle${visibleSeries.tomorrow ? " active" : ""}`}
+                onClick={() => toggleSeries("tomorrow")}
+              >
+                Tomorrow
+              </button>
+              <button
+                type="button"
+                className={`series-toggle${visibleSeries.ecmwf ? " active" : ""}`}
+                onClick={() => toggleSeries("ecmwf")}
+              >
+                ECMWF
+              </button>
+              <button
+                type="button"
+                className={`series-toggle${visibleSeries.poly ? " active" : ""}`}
+                onClick={() => toggleSeries("poly")}
+              >
+                Poly implied
+              </button>
+              <button
+                type="button"
+                className={`series-toggle${visibleSeries.topBucket ? " active" : ""}`}
+                onClick={() => toggleSeries("topBucket")}
+              >
+                Top-1 bucket temp
+              </button>
+            </div>
+          </div>
           <span className="card-subtitle">
-            {`Tomorrow · ECMWF · Poly implied · Top-1 bucket temperature${selectedUnit ? ` (°${selectedUnit})` : ""}`}
+            {`Toggle lines as needed${selectedUnit ? ` · unit °${selectedUnit}` : ""}`}
           </span>
         </div>
         <div className="card-body market-forecast-layout">
@@ -455,18 +502,26 @@ function MarketDetail({ slug, market }) {
                   <YAxis yAxisId="temp" {...axisProps()} />
                   <Tooltip content={<ChartTooltip labelFormatter={fmtDateTime} valueFormatter={(v) => fmtTemp(v, selectedUnit)} />} />
                   <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-                  <Line yAxisId="temp" type="monotone" dataKey="tomorrow_max" stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
-                  <Line yAxisId="temp" type="monotone" dataKey="ecmwf_max" stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
-                  <Line yAxisId="temp" type="monotone" dataKey="poly_implied" stroke={CHART_THEME.poly} dot={false} name="Poly implied" strokeWidth={2} />
-                  <Line
-                    yAxisId="temp"
-                    type="monotone"
-                    dataKey="top_bucket_value"
-                    stroke={CHART_THEME.topBucketValue}
-                    dot={false}
-                    name="Top-1 bucket temp"
-                    strokeWidth={2}
-                  />
+                  {visibleSeries.tomorrow && (
+                    <Line yAxisId="temp" type="monotone" dataKey="tomorrow_max" stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
+                  )}
+                  {visibleSeries.ecmwf && (
+                    <Line yAxisId="temp" type="monotone" dataKey="ecmwf_max" stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
+                  )}
+                  {visibleSeries.poly && (
+                    <Line yAxisId="temp" type="monotone" dataKey="poly_implied" stroke={CHART_THEME.poly} dot={false} name="Poly implied" strokeWidth={2} />
+                  )}
+                  {visibleSeries.topBucket && (
+                    <Line
+                      yAxisId="temp"
+                      type="monotone"
+                      dataKey="top_bucket_value"
+                      stroke={CHART_THEME.topBucketValue}
+                      dot={false}
+                      name="Top-1 bucket temp"
+                      strokeWidth={2}
+                    />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             ) : (
