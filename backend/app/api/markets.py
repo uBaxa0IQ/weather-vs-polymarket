@@ -43,13 +43,21 @@ async def market_strategy_timeseries(
         return []
 
     final = next(
-        (r for r in reversed(rows) if r.get("top_bucket_index") is not None and r.get("bucket_labels_json")),
+        (
+            r for r in reversed(rows)
+            if r.get("bucket_labels_json")
+            and (
+                r.get("pm_winning_bucket_index") is not None
+                or r.get("top_bucket_index") is not None
+            )
+        ),
         None,
     )
     if final is None:
         return []
 
-    final_idx = int(final["top_bucket_index"])
+    pm_winning_idx = final.get("pm_winning_bucket_index")
+    final_idx = int(pm_winning_idx if pm_winning_idx is not None else final["top_bucket_index"])
     out: list[dict] = []
     for r in rows:
         labels = r.get("bucket_labels_json") or []

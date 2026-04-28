@@ -43,6 +43,20 @@ _MONTHS = {
 }
 
 
+def _pick_exact_event(events: list[dict], event_slug: str) -> dict | None:
+    """Gamma `slug` query may return multiple rows; prefer exact event slug match."""
+    if not isinstance(events, list):
+        return None
+    wanted = str(event_slug or "").strip().lower()
+    for evt in events:
+        if not isinstance(evt, dict):
+            continue
+        slug = str(evt.get("slug") or "").strip().lower()
+        if slug == wanted:
+            return evt
+    return events[0] if events else None
+
+
 # ---------------------------------------------------------------------------
 # HTTP client lifecycle
 # ---------------------------------------------------------------------------
@@ -359,7 +373,8 @@ async def fetch_polymarket_implied(event_slug: str, target: date) -> dict:
     date_frag = _slug_date(target)
     q = urllib.parse.urlencode({"slug": event_slug, "active": "true", "limit": 5})
     data = await _get_json(f"{GAMMA_EVENTS_URL}?{q}")
-    if not isinstance(data, list) or not data:
+    event = _pick_exact_event(data if isinstance(data, list) else [], event_slug)
+    if event is None:
         return {
             "implied": None,
             "top_bucket": None,
@@ -370,7 +385,7 @@ async def fetch_polymarket_implied(event_slug: str, target: date) -> dict:
             "top_bucket_index": None,
             "bucket_unit": None,
         }
-    markets = data[0].get("markets", [])
+    markets = event.get("markets", [])
     rows: list[tuple[str, float, float]] = []
     for m in markets:
         slug = str(m.get("slug") or "")
@@ -457,15 +472,14 @@ async def fetch_polymarket_resolution(event_slug: str, target: date) -> dict:
     date_frag = _slug_date(target)
     q = urllib.parse.urlencode({"slug": event_slug, "limit": 5})
     data = await _get_json(f"{GAMMA_EVENTS_URL}?{q}")
-    if not isinstance(data, list) or not data:
+    evt = _pick_exact_event(data if isinstance(data, list) else [], event_slug)
+    if evt is None:
         return {
             "resolved": False,
             "winning_label": None,
             "event_closed": None,
             "winning_market_slug": None,
         }
-
-    evt = data[0]
     markets = evt.get("markets", []) or []
     event_closed = bool(evt.get("closed", False))
 

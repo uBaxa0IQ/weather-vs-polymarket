@@ -104,8 +104,9 @@ function bucketBounds(labels, idx) {
 function bucketCenterFromLabel(label) {
   const { lo, hi } = parseBucket(label);
   if (lo != null && hi != null) return (lo + hi) / 2;
-  if (lo == null && hi != null) return hi - 1;
-  if (lo != null && hi == null) return lo + 1;
+  // Open-ended buckets like "15corbelow"/"30corhigher" do not have a stable
+  // physical center, so avoid plotting an arbitrary synthetic value.
+  if (lo == null || hi == null) return null;
   return null;
 }
 

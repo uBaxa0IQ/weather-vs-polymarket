@@ -34,6 +34,7 @@ async def get_strategy_timeseries_raw(session: AsyncSession, event_slug: str) ->
             MarketSnapshot.time_to_resolve_hours,
             MarketSnapshot.bucket_labels_json,
             MarketSnapshot.top_bucket_index,
+            Market.pm_winning_bucket_index,
             MarketSnapshot.tomorrow_max,
             MarketSnapshot.ecmwf_max,
         )

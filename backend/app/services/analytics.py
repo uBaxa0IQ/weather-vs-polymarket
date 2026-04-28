@@ -25,10 +25,34 @@ def parse_bucket_bounds(label: str) -> tuple[float, float]:
 def temp_to_bucket_index(temp_value: float, bucket_labels: list[str]) -> int | None:
     if not bucket_labels:
         return None
-    for idx, label in enumerate(bucket_labels):
-        lo, hi = parse_bucket_bounds(label)
-        if lo <= temp_value <= hi:
+    parsed = [parse_bucket_bounds(label) for label in bucket_labels]
+    for idx, (lo, hi) in enumerate(parsed):
+        # For single-point labels like "18c", infer interval by midpoint to neighbors.
+        if lo == hi and lo not in (-inf, inf):
+            center = lo
+            prev_center = None
+            next_center = None
+            if idx > 0:
+                plo, phi = parsed[idx - 1]
+                if plo not in (-inf, inf) and phi not in (-inf, inf):
+                    prev_center = (plo + phi) / 2.0
+            if idx < len(parsed) - 1:
+                nlo, nhi = parsed[idx + 1]
+                if nlo not in (-inf, inf) and nhi not in (-inf, inf):
+                    next_center = (nlo + nhi) / 2.0
+            lo = (prev_center + center) / 2.0 if prev_center is not None else center - 1.0
+            hi = (next_center + center) / 2.0 if next_center is not None else center + 1.0
+
+        ge = lo == -inf or temp_value >= lo
+        # Match frontend semantics: upper bound is exclusive except fallback for final bucket.
+        le = hi == inf or temp_value < hi
+        if ge and le:
             return idx
+
+    # Inclusive upper bound fallback for the final bucket.
+    last_lo, last_hi = parsed[-1]
+    if (last_lo == -inf or temp_value >= last_lo) and (last_hi == inf or temp_value <= last_hi):
+        return len(parsed) - 1
     return None
 
 
@@ -39,7 +63,7 @@ def _hit(pred_idx: int | None, final_idx: int, neighbors: int) -> int:
 
 
 def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Rows must contain market_id, captured_at_utc, time_to_resolve_hours, bucket_labels_json, top_bucket_index, tomorrow_max, ecmwf_max."""
+    """Rows must contain market_id, captured_at_utc, time_to_resolve_hours, bucket_labels_json, top_bucket_index, pm_winning_bucket_index, tomorrow_max, ecmwf_max."""
     by_market: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_market[row["market_id"]].append(row)
@@ -63,7 +87,8 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         if final is None:
             continue
-        final_idx = int(final["top_bucket_index"])
+        pm_winning_idx = final.get("pm_winning_bucket_index")
+        final_idx = int(pm_winning_idx if pm_winning_idx is not None else final["top_bucket_index"])
 
         for snap in snapshots_sorted:
             labels = snap.get("bucket_labels_json") or []
