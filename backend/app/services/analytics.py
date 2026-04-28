@@ -81,14 +81,10 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     for snapshots in by_market.values():
         snapshots_sorted = sorted(snapshots, key=lambda r: r["captured_at_utc"])
-        final = next(
-            (r for r in reversed(snapshots_sorted) if r.get("top_bucket_index") is not None and r.get("bucket_labels_json")),
-            None,
-        )
-        if final is None:
+        final_idx_raw = snapshots_sorted[-1].get("pm_winning_bucket_index")
+        if final_idx_raw is None:
             continue
-        pm_winning_idx = final.get("pm_winning_bucket_index")
-        final_idx = int(pm_winning_idx if pm_winning_idx is not None else final["top_bucket_index"])
+        final_idx = int(final_idx_raw)
 
         for snap in snapshots_sorted:
             labels = snap.get("bucket_labels_json") or []
