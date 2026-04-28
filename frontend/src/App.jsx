@@ -104,9 +104,10 @@ function bucketBounds(labels, idx) {
 function bucketCenterFromLabel(label) {
   const { lo, hi } = parseBucket(label);
   if (lo != null && hi != null) return (lo + hi) / 2;
-  // Open-ended buckets like "15corbelow"/"30corhigher" do not have a stable
-  // physical center, so avoid plotting an arbitrary synthetic value.
-  if (lo == null || hi == null) return null;
+  // For open-ended buckets, use the threshold itself so plotted values
+  // align with the visible bucket labels (e.g. "15corbelow", "27corhigher").
+  if (lo == null && hi != null) return hi;
+  if (lo != null && hi == null) return lo;
   return null;
 }
 
