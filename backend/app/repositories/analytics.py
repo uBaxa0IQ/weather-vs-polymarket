@@ -45,7 +45,7 @@ async def get_strategy_curve_rows(session: AsyncSession) -> list[dict]:
         )
         .join(Market)
         .where(
-            Market.status == "nominally_resolved",
+            Market.status.in_(("nominally_resolved", "pm_resolved")),
             Market.pm_winning_bucket_index.isnot(None),
             MarketSnapshot.bucket_labels_json.isnot(None),
             MarketSnapshot.top_bucket_index.isnot(None),

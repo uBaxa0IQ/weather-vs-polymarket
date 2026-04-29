@@ -355,6 +355,7 @@ body {
 
 .card-status.tracking         { color: var(--green); }
 .card-status.nominally_resolved { color: var(--text-3); }
+.card-status.pm_resolved      { color: var(--green); }
 
 /* ─── Main area ──────────────────────────────────────────────────────────── */
 .main {

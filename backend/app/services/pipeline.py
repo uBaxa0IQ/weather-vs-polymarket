@@ -305,6 +305,7 @@ async def reconcile_polymarket_resolutions() -> None:
                     update(Market)
                     .where(Market.id == market.id)
                     .values(
+                        status="pm_resolved",
                         pm_resolved_at_utc=now_utc,
                         pm_winning_label=winning,
                         pm_winning_bucket_index=idx,

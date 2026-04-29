@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS markets (
   target_date_local DATE NOT NULL,
   timezone_name TEXT NOT NULL,
   nominal_resolve_at_utc TIMESTAMPTZ NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('tracking', 'nominally_resolved')),
+  status TEXT NOT NULL CHECK (status IN ('tracking', 'nominally_resolved', 'pm_resolved')),
   created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_markets_city_status ON markets(city_id, status);

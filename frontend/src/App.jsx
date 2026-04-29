@@ -265,6 +265,8 @@ function PipelineControl({ health, onAction }) {
 
 function MarketCard({ market, selected, onClick }) {
   const isTracking = market.status === "tracking";
+  const isPmResolved = market.status === "pm_resolved";
+  const statusLabel = isTracking ? "Tracking" : (isPmResolved ? "PM resolved" : "Nominal resolved");
   return (
     <button
       className={`market-card${selected ? " selected" : ""}`}
@@ -282,7 +284,7 @@ function MarketCard({ market, selected, onClick }) {
       )}
       <div className={`card-status ${market.status}`}>
         <span className="dot" />
-        {isTracking ? "Tracking" : "Nominal resolved"}
+        {statusLabel}
       </div>
     </button>
   );
@@ -433,7 +435,11 @@ function MarketDetail({ slug, market }) {
               <>
                 <span className="meta-chip">{market.city_slug}</span>
                 <span className={`meta-chip ${market.status === "tracking" ? "green" : "dim"}`}>
-                  {market.status === "tracking" ? "● Tracking" : "○ Nominal resolved"}
+                  {market.status === "tracking"
+                    ? "● Tracking"
+                    : market.status === "pm_resolved"
+                      ? "● PM resolved"
+                      : "○ Nominal resolved"}
                 </span>
                 {market.pm_winning_label && (
                   <span className="meta-chip" title="Official Polymarket / UMA outcome">

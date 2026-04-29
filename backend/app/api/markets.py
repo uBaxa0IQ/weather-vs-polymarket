@@ -58,7 +58,7 @@ def _expand_with_neighbors(indices: list[int], total: int) -> list[int]:
 @router.get("")
 async def list_markets(
     city: Annotated[str | None, Query(pattern=_CITY_PATTERN, max_length=60)] = None,
-    status: Annotated[str | None, Query(pattern="^(tracking|nominally_resolved)$")] = None,
+    status: Annotated[str | None, Query(pattern="^(tracking|nominally_resolved|pm_resolved)$")] = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     return await market_repo.list_markets(session, city, status)
