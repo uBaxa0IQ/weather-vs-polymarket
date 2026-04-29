@@ -187,6 +187,7 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         out.append(
             {
                 "hours_to_resolve": bucket_h,
+                "samples_count": len(m["tomorrow_main"]),
                 "tomorrow_main": sum(m["tomorrow_main"]) / len(m["tomorrow_main"]) if m["tomorrow_main"] else None,
                 "ecmwf_main": sum(m["ecmwf_main"]) / len(m["ecmwf_main"]) if m["ecmwf_main"] else None,
                 "tomorrow_main_plus_1": (

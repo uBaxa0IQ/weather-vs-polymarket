@@ -131,9 +131,10 @@ function bucketIndexForTemp(temp, labels) {
 
 // ─── Custom Recharts tooltip ─────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload, label, labelFormatter, valueFormatter }) {
+function ChartTooltip({ active, payload, label, labelFormatter, valueFormatter, metaFormatter }) {
   if (!active || !payload?.length) return null;
   const displayLabel = labelFormatter ? labelFormatter(label) : label;
+  const metaText = metaFormatter ? metaFormatter(payload?.[0]?.payload) : null;
   const sortedPayload = [...payload].sort((a, b) => {
     const av = typeof a?.value === "number" ? a.value : Number.NEGATIVE_INFINITY;
     const bv = typeof b?.value === "number" ? b.value : Number.NEGATIVE_INFINITY;
@@ -142,6 +143,7 @@ function ChartTooltip({ active, payload, label, labelFormatter, valueFormatter }
   return (
     <div className="chart-tooltip">
       {displayLabel && <div className="chart-tooltip-label">{displayLabel}</div>}
+      {metaText && <div className="chart-tooltip-label" style={{ color: "var(--text-2)", fontWeight: 500 }}>{metaText}</div>}
       {sortedPayload.map((entry) => (
         <div key={entry.dataKey} className="chart-tooltip-row">
           <span className="chart-tooltip-dot" style={{ background: entry.color }} />
@@ -321,7 +323,16 @@ function StrategyCurves({ data }) {
                 <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
                 <XAxis dataKey="hours_to_resolve" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
                 <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-                <Tooltip content={<ChartTooltip labelFormatter={(v) => `${v}h to resolve`} />} />
+                <Tooltip
+                  content={(
+                    <ChartTooltip
+                      labelFormatter={(v) => `${v}h to resolve`}
+                      metaFormatter={(row) => (
+                        row?.samples_count != null ? `${row.samples_count} records` : null
+                      )}
+                    />
+                  )}
+                />
                 <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
                 <Line type="monotone" dataKey={k1} stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
                 <Line type="monotone" dataKey={k2} stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
