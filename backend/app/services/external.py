@@ -464,6 +464,41 @@ def _outcome_yes_won(market: dict) -> bool:
     return yes >= 0.99
 
 
+def _norm_status(raw: object) -> str:
+    return str(raw or "").strip().lower()
+
+
+def _is_officially_resolved_market(market: dict) -> bool:
+    """
+    Prefer explicit UMA/Gamma lifecycle signal over price heuristics.
+    """
+    status = _norm_status(market.get("umaResolutionStatus"))
+    if status:
+        unresolved = {
+            "open",
+            "active",
+            "pending",
+            "requested",
+            "proposed",
+            "challenged",
+            "disputed",
+            "in_dispute",
+            "unresolved",
+            "none",
+        }
+        if status in unresolved:
+            return False
+        return True
+
+    # Fallback when umaResolutionStatus is absent in payloads:
+    # closed market not accepting new orders is treated as resolved lifecycle-wise.
+    closed = bool(market.get("closed", False))
+    accepting_orders = market.get("acceptingOrders")
+    if accepting_orders is None:
+        return closed
+    return closed and not bool(accepting_orders)
+
+
 async def fetch_polymarket_resolution(event_slug: str, target: date) -> dict:
     """
     Detect official Polymarket resolution for the target date's bucket markets.
@@ -485,6 +520,7 @@ async def fetch_polymarket_resolution(event_slug: str, target: date) -> dict:
 
     winning_label: str | None = None
     winning_slug: str | None = None
+    winner_status: str | None = None
     for m in markets:
         if not isinstance(m, dict):
             continue
@@ -492,12 +528,15 @@ async def fetch_polymarket_resolution(event_slug: str, target: date) -> dict:
         if date_frag not in mslug:
             continue
         label = mslug.split(f"on-{date_frag}-")[-1] if f"on-{date_frag}-" in mslug else mslug
+        if not _is_officially_resolved_market(m):
+            continue
         if not _outcome_yes_won(m):
             continue
         if winning_label is not None and winning_label != label:
             logger.warning("multiple PM Yes winners for %s on %s: %r vs %r", event_slug, date_frag, winning_label, label)
         winning_label = label
         winning_slug = mslug
+        winner_status = _norm_status(m.get("umaResolutionStatus")) or None
 
     resolved = winning_label is not None
     return {
@@ -505,4 +544,5 @@ async def fetch_polymarket_resolution(event_slug: str, target: date) -> dict:
         "winning_label": winning_label,
         "event_closed": event_closed,
         "winning_market_slug": winning_slug,
+        "winning_uma_resolution_status": winner_status,
     }

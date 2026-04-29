@@ -312,6 +312,7 @@ async def reconcile_polymarket_resolutions() -> None:
                         pm_resolution_meta={
                             "event_closed": res.get("event_closed"),
                             "winning_market_slug": res.get("winning_market_slug"),
+                            "winning_uma_resolution_status": res.get("winning_uma_resolution_status"),
                         },
                     )
                 )

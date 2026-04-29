@@ -62,6 +62,48 @@ def _hit(pred_idx: int | None, final_idx: int, neighbors: int) -> int:
     return int(abs(pred_idx - final_idx) <= neighbors)
 
 
+def _bucket_center_from_bounds(lo: float, hi: float) -> float:
+    if lo == -inf and hi != inf:
+        return hi
+    if hi == inf and lo != -inf:
+        return lo
+    if lo != -inf and hi != inf:
+        return (lo + hi) / 2.0
+    return 0.0
+
+
+def _two_nearest_bucket_indices(temp_value: float, bucket_labels: list[str]) -> list[int]:
+    if not bucket_labels:
+        return []
+    parsed = [parse_bucket_bounds(label) for label in bucket_labels]
+    ranked = sorted(
+        range(len(parsed)),
+        key=lambda idx: (abs(_bucket_center_from_bounds(parsed[idx][0], parsed[idx][1]) - temp_value), idx),
+    )
+    if not ranked:
+        return []
+    return ranked[: min(2, len(ranked))]
+
+
+def _expanded_indices_with_neighbors(base_indices: list[int], total: int) -> list[int]:
+    if not base_indices or total <= 0:
+        return []
+    out = set(base_indices)
+    lo = min(base_indices)
+    hi = max(base_indices)
+    if lo - 1 >= 0:
+        out.add(lo - 1)
+    if hi + 1 < total:
+        out.add(hi + 1)
+    return sorted(out)
+
+
+def _hit_any(pred_indices: list[int], final_idx: int) -> int:
+    if not pred_indices:
+        return 0
+    return int(final_idx in pred_indices)
+
+
 def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Rows must contain market_id, captured_at_utc, time_to_resolve_hours, bucket_labels_json, top_bucket_index, pm_winning_bucket_index, tomorrow_max, ecmwf_max."""
     by_market: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -101,12 +143,28 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if snap.get("ecmwf_max") is not None
                 else None
             )
+            tomorrow_main_plus_1_idxs = (
+                _two_nearest_bucket_indices(float(snap["tomorrow_max"]), labels)
+                if snap.get("tomorrow_max") is not None
+                else []
+            )
+            ecmwf_main_plus_1_idxs = (
+                _two_nearest_bucket_indices(float(snap["ecmwf_max"]), labels)
+                if snap.get("ecmwf_max") is not None
+                else []
+            )
+            tomorrow_main_plus_2_idxs = _expanded_indices_with_neighbors(
+                tomorrow_main_plus_1_idxs, len(labels)
+            )
+            ecmwf_main_plus_2_idxs = _expanded_indices_with_neighbors(
+                ecmwf_main_plus_1_idxs, len(labels)
+            )
             agg[t_bucket]["tomorrow_main"].append(_hit(tomorrow_pred, final_idx, 0))
             agg[t_bucket]["ecmwf_main"].append(_hit(ecmwf_pred, final_idx, 0))
-            agg[t_bucket]["tomorrow_main_plus_1"].append(_hit(tomorrow_pred, final_idx, 1))
-            agg[t_bucket]["ecmwf_main_plus_1"].append(_hit(ecmwf_pred, final_idx, 1))
-            agg[t_bucket]["tomorrow_main_plus_2"].append(_hit(tomorrow_pred, final_idx, 2))
-            agg[t_bucket]["ecmwf_main_plus_2"].append(_hit(ecmwf_pred, final_idx, 2))
+            agg[t_bucket]["tomorrow_main_plus_1"].append(_hit_any(tomorrow_main_plus_1_idxs, final_idx))
+            agg[t_bucket]["ecmwf_main_plus_1"].append(_hit_any(ecmwf_main_plus_1_idxs, final_idx))
+            agg[t_bucket]["tomorrow_main_plus_2"].append(_hit_any(tomorrow_main_plus_2_idxs, final_idx))
+            agg[t_bucket]["ecmwf_main_plus_2"].append(_hit_any(ecmwf_main_plus_2_idxs, final_idx))
 
     out: list[dict[str, Any]] = []
     for bucket_h in sorted(agg.keys(), reverse=True):
