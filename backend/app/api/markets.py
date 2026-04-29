@@ -32,26 +32,40 @@ def _bucket_midpoint(label: str) -> float:
     return 0.0
 
 
-def _two_nearest_indices(temp_value: float | None, labels: list[str]) -> list[int]:
-    if temp_value is None or not labels:
-        return []
-    ranked = sorted(
-        range(len(labels)),
+def _nearest_adjacent_index(temp_value: float, pred_idx: int, labels: list[str]) -> int | None:
+    if not labels or pred_idx < 0 or pred_idx >= len(labels):
+        return None
+    candidates: list[int] = []
+    if pred_idx - 1 >= 0:
+        candidates.append(pred_idx - 1)
+    if pred_idx + 1 < len(labels):
+        candidates.append(pred_idx + 1)
+    if not candidates:
+        return None
+    return min(
+        candidates,
         key=lambda i: (abs(_bucket_midpoint(str(labels[i])) - float(temp_value)), i),
     )
-    return ranked[: min(2, len(ranked))]
 
 
-def _expand_with_neighbors(indices: list[int], total: int) -> list[int]:
-    if not indices:
+def _pred_plus_one_nearest(temp_value: float | None, pred_idx: int | None, labels: list[str]) -> list[int]:
+    if temp_value is None or pred_idx is None:
         return []
-    out = set(indices)
-    lo = min(indices)
-    hi = max(indices)
-    if lo - 1 >= 0:
-        out.add(lo - 1)
-    if hi + 1 < total:
-        out.add(hi + 1)
+    out = {pred_idx}
+    near = _nearest_adjacent_index(float(temp_value), pred_idx, labels)
+    if near is not None:
+        out.add(near)
+    return sorted(out)
+
+
+def _pred_plus_up_down(pred_idx: int | None, total: int) -> list[int]:
+    if pred_idx is None:
+        return []
+    out = {pred_idx}
+    if pred_idx - 1 >= 0:
+        out.add(pred_idx - 1)
+    if pred_idx + 1 < total:
+        out.add(pred_idx + 1)
     return sorted(out)
 
 
@@ -104,10 +118,18 @@ async def market_strategy_timeseries(
             continue
         t_idx = temp_to_bucket_index(float(r["tomorrow_max"]), labels) if r.get("tomorrow_max") is not None else None
         e_idx = temp_to_bucket_index(float(r["ecmwf_max"]), labels) if r.get("ecmwf_max") is not None else None
-        t_main_plus_1 = _two_nearest_indices(float(r["tomorrow_max"]) if r.get("tomorrow_max") is not None else None, labels)
-        e_main_plus_1 = _two_nearest_indices(float(r["ecmwf_max"]) if r.get("ecmwf_max") is not None else None, labels)
-        t_main_plus_2 = _expand_with_neighbors(t_main_plus_1, len(labels))
-        e_main_plus_2 = _expand_with_neighbors(e_main_plus_1, len(labels))
+        t_main_plus_1 = _pred_plus_one_nearest(
+            float(r["tomorrow_max"]) if r.get("tomorrow_max") is not None else None,
+            t_idx,
+            labels,
+        )
+        e_main_plus_1 = _pred_plus_one_nearest(
+            float(r["ecmwf_max"]) if r.get("ecmwf_max") is not None else None,
+            e_idx,
+            labels,
+        )
+        t_main_plus_2 = _pred_plus_up_down(t_idx, len(labels))
+        e_main_plus_2 = _pred_plus_up_down(e_idx, len(labels))
         out.append(
             {
                 "captured_at_utc": r["captured_at_utc"],
