@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import desc, insert, select, update
@@ -21,6 +22,39 @@ from app.services.external import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _norm_bucket_label(label: str) -> str:
+    s = str(label or "").strip().lower()
+    s = s.replace("deg", "")
+    s = re.sub(r"\s+", "", s)
+    s = s.replace("°", "")
+    s = s.replace("forbelow", "orbelow")
+    s = s.replace("forhigher", "orhigher")
+    return s
+
+
+def _resolve_winning_bucket_index(
+    winning_label: str, snapshot_labels: list | None
+) -> int | None:
+    if not isinstance(snapshot_labels, list) or not snapshot_labels:
+        return None
+    target = _norm_bucket_label(winning_label)
+    if not target:
+        return None
+
+    # 1) Exact (normalized) label match.
+    for i, raw in enumerate(snapshot_labels):
+        if _norm_bucket_label(str(raw)) == target:
+            return i
+
+    # 2) Fallback for minor separator drift (e.g. 71-orbelow vs 71orbelow).
+    target_compact = re.sub(r"[^a-z0-9]", "", target)
+    for i, raw in enumerate(snapshot_labels):
+        got = re.sub(r"[^a-z0-9]", "", _norm_bucket_label(str(raw)))
+        if got == target_compact:
+            return i
+    return None
 
 
 def _c_to_f(value: float) -> float:
@@ -293,12 +327,13 @@ async def reconcile_polymarket_resolutions() -> None:
                     select(MarketSnapshot.bucket_labels_json)
                     .where(MarketSnapshot.market_id == market.id)
                     .order_by(desc(MarketSnapshot.captured_at_utc))
-                    .limit(1)
+                    .limit(48)
                 )
-                one = row.first()
-                labels = one[0] if one else None
-                if isinstance(labels, list) and winning in labels:
-                    idx = int(labels.index(winning))
+                for one in row.all():
+                    labels = one[0] if one else None
+                    idx = _resolve_winning_bucket_index(winning, labels)
+                    if idx is not None:
+                        break
 
             async with factory() as session:
                 await session.execute(
