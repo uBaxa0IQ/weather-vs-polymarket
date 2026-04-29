@@ -434,7 +434,7 @@ function MarketDetail({ slug, market }) {
             {market && (
               <>
                 <span className="meta-chip">{market.city_slug}</span>
-                <span className={`meta-chip ${market.status === "tracking" ? "green" : "dim"}`}>
+                <span className={`meta-chip ${market.status === "tracking" ? "green" : market.status === "pm_resolved" ? "pm" : "dim"}`}>
                   {market.status === "tracking"
                     ? "● Tracking"
                     : market.status === "pm_resolved"

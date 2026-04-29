@@ -11,6 +11,8 @@
   --text-3: #484f58;
   --green: #3fb950;
   --green-dim: #238636;
+  --pm-resolved: #a371f7;
+  --pm-resolved-dim: #6e40c9;
   --red: #f85149;
   --blue: #58a6ff;
   --purple: #bc8cff;
@@ -355,7 +357,7 @@ body {
 
 .card-status.tracking         { color: var(--green); }
 .card-status.nominally_resolved { color: var(--text-3); }
-.card-status.pm_resolved      { color: var(--green); }
+.card-status.pm_resolved      { color: var(--pm-resolved); }
 
 /* ─── Main area ──────────────────────────────────────────────────────────── */
 .main {
@@ -466,6 +468,7 @@ body {
 }
 
 .meta-chip.green { color: var(--green); border-color: var(--green-dim); background: rgba(63,185,80,.1); }
+.meta-chip.pm    { color: var(--pm-resolved); border-color: var(--pm-resolved-dim); background: rgba(163,113,247,.12); }
 .meta-chip.dim   { color: var(--text-3); }
 
 /* ─── Charts grid ────────────────────────────────────────────────────────── */
