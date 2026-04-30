@@ -89,20 +89,17 @@ async def bootstrap_cities() -> None:
 
     selected: list[dict] = []
     seen: set[str] = set()
+    # Only cities explicitly listed in TRACKED_CITIES (no Gamma "fill" past that list).
     for city in requested:
-        if city in by_city and city not in seen:
-            selected.append(by_city[city])
-            seen.add(city)
-    for city, evt in by_city.items():
         if len(selected) >= settings.max_cities:
             break
-        if city not in seen:
-            selected.append(evt)
+        if city in by_city and city not in seen:
+            selected.append(by_city[city])
             seen.add(city)
 
     factory = get_session_factory()
     async with factory() as session:
-        for evt in selected[: settings.max_cities]:
+        for evt in selected:
             stmt = pg_insert(City).values(
                 city_slug=evt["city_slug"],
                 station_code=evt["station_code"],
