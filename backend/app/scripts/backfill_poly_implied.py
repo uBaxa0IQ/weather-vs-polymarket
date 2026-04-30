@@ -2,64 +2,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import re
 from dataclasses import dataclass
 
 from sqlalchemy import select, update
 
 from app.database import close_db, get_session_factory, init_db
 from app.models import MarketSnapshot
-
-
-def _parse_bounds(label: str) -> tuple[float | None, float | None]:
-    s = str(label or "").lower().replace("deg", "").replace(" ", "")
-    nums = [int(x) for x in re.findall(r"(?<!\d)-?\d+", s)]
-    if "orbelow" in s and nums:
-        return (None, float(nums[0]))
-    if "orhigher" in s and nums:
-        return (float(nums[0]), None)
-    if len(nums) >= 2:
-        lo, hi = nums[0], nums[1]
-        return (float(min(lo, hi)), float(max(lo, hi)))
-    if len(nums) == 1:
-        n = float(nums[0])
-        return (n, n)
-    return (None, None)
-
-
-def _bucket_center(lo: float | None, hi: float | None) -> float | None:
-    if lo is not None and hi is not None:
-        return (lo + hi) / 2.0
-    if lo is None and hi is not None:
-        return hi - 1.0
-    if lo is not None and hi is None:
-        return lo + 1.0
-    return None
-
-
-def _compute_implied(labels: list, prices: list) -> float | None:
-    if not labels or not prices:
-        return None
-    n = min(len(labels), len(prices))
-    weighted_sum = 0.0
-    total_weight = 0.0
-    for i in range(n):
-        label = str(labels[i] or "")
-        try:
-            p = float(prices[i])
-        except (TypeError, ValueError):
-            continue
-        if p <= 0:
-            continue
-        lo, hi = _parse_bounds(label)
-        center = _bucket_center(lo, hi)
-        if center is None:
-            continue
-        weighted_sum += center * p
-        total_weight += p
-    if total_weight <= 0:
-        return None
-    return round(weighted_sum / total_weight, 2)
+from app.services.external import recompute_poly_from_label_price_pairs
 
 
 @dataclass
@@ -67,8 +16,49 @@ class BackfillStats:
     scanned: int = 0
     changed_rows: int = 0
     skipped_no_data: int = 0
-    skipped_not_computable: int = 0
     unchanged: int = 0
+
+
+def _prices_close(old_list: list, new_list: list) -> bool:
+    if len(old_list) != len(new_list):
+        return False
+    for a, b in zip(old_list, new_list):
+        try:
+            if abs(float(a) - float(b)) > 1e-7:
+                return False
+        except (TypeError, ValueError):
+            if str(a) != str(b):
+                return False
+    return True
+
+
+def _poly_row_unchanged(row, poly: dict) -> bool:
+    if row.buckets_count != poly["n"]:
+        return False
+    ni = poly["implied"]
+    if row.poly_implied is None and ni is not None:
+        return False
+    if row.poly_implied is not None and ni is None:
+        return False
+    if row.poly_implied is not None and ni is not None and abs(float(row.poly_implied) - float(ni)) >= 1e-9:
+        return False
+    if (row.top_bucket or None) != (poly["top_bucket"] or None):
+        return False
+    op = row.top_bucket_prob
+    np = poly["top_price"]
+    if op is None and np is not None:
+        return False
+    if op is not None and np is None:
+        return False
+    if op is not None and np is not None and abs(float(op) - float(np)) >= 1e-9:
+        return False
+    if (row.top_bucket_index or None) != (poly["top_bucket_index"] or None):
+        return False
+    if (row.bucket_labels_json or []) != poly["bucket_labels"]:
+        return False
+    if not _prices_close(row.bucket_prices_json or [], poly["bucket_prices"]):
+        return False
+    return True
 
 
 async def run_backfill(dry_run: bool) -> BackfillStats:
@@ -82,6 +72,10 @@ async def run_backfill(dry_run: bool) -> BackfillStats:
                 MarketSnapshot.bucket_labels_json,
                 MarketSnapshot.bucket_prices_json,
                 MarketSnapshot.poly_implied,
+                MarketSnapshot.top_bucket,
+                MarketSnapshot.top_bucket_prob,
+                MarketSnapshot.top_bucket_index,
+                MarketSnapshot.buckets_count,
             ).order_by(MarketSnapshot.captured_at_utc.asc())
         )
         rows = result.all()
@@ -94,13 +88,9 @@ async def run_backfill(dry_run: bool) -> BackfillStats:
                 stats.skipped_no_data += 1
                 continue
 
-            new_implied = _compute_implied(labels, prices)
-            if new_implied is None:
-                stats.skipped_not_computable += 1
-                continue
+            poly = recompute_poly_from_label_price_pairs(labels, prices)
 
-            old = row.poly_implied
-            if old is not None and abs(float(old) - float(new_implied)) < 1e-9:
+            if _poly_row_unchanged(row, poly):
                 stats.unchanged += 1
                 continue
 
@@ -112,7 +102,15 @@ async def run_backfill(dry_run: bool) -> BackfillStats:
                         MarketSnapshot.id == row.id,
                         MarketSnapshot.captured_at_utc == row.captured_at_utc,
                     )
-                    .values(poly_implied=new_implied)
+                    .values(
+                        poly_implied=poly["implied"],
+                        top_bucket=poly["top_bucket"],
+                        top_bucket_prob=poly["top_price"],
+                        top_bucket_index=poly["top_bucket_index"],
+                        buckets_count=poly["n"],
+                        bucket_labels_json=poly["bucket_labels"],
+                        bucket_prices_json=poly["bucket_prices"],
+                    )
                 )
 
         if not dry_run:
@@ -125,7 +123,6 @@ def _print_stats(stats: BackfillStats, dry_run: bool) -> None:
     print(f"[{mode}] scanned={stats.scanned}")
     print(f"[{mode}] changed_rows={stats.changed_rows}")
     print(f"[{mode}] skipped_no_data={stats.skipped_no_data}")
-    print(f"[{mode}] skipped_not_computable={stats.skipped_not_computable}")
     print(f"[{mode}] unchanged={stats.unchanged}")
 
 
@@ -140,7 +137,10 @@ async def _main_async(dry_run: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Backfill market_snapshots.poly_implied from bucket labels and prices."
+        description=(
+            "Backfill market_snapshots Polymarket fields from bucket_labels_json / "
+            "bucket_prices_json (poly_implied, top_bucket, indices, sorted JSON)."
+        )
     )
     parser.add_argument(
         "--dry-run",

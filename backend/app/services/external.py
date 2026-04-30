@@ -11,9 +11,9 @@ import re
 import statistics
 import time
 import urllib.parse
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from datetime import time as dtime
-from datetime import timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -181,6 +181,68 @@ def infer_bucket_unit(labels: list[str]) -> str | None:
         if re.search(r"-?\d+c(?:or|$|[^a-z])", s):
             return "C"
     return None
+
+
+def _clamp_unit_probability(raw: float) -> float | None:
+    """Clamp to [0, 1]. Drop NaN."""
+    if math.isnan(raw):
+        return None
+    return min(max(raw, 0.0), 1.0)
+
+
+def _aggregate_poly_rows(rows: list[tuple[str, float, float]]) -> dict[str, Any]:
+    """
+    rows: (label, price, center). Prices in (0, 1]; tie-break: higher price, then warmer center.
+    """
+    if not rows:
+        return {
+            "implied": None,
+            "top_bucket": None,
+            "top_price": None,
+            "n": 0,
+            "bucket_labels": [],
+            "bucket_prices": [],
+            "top_bucket_index": None,
+            "bucket_unit": None,
+        }
+    rows_sorted = sorted(rows, key=lambda x: x[2])
+    top_bucket, top_price, _ = max(rows, key=lambda x: (x[1], x[2]))
+    top_bucket_index = next((i for i, r in enumerate(rows_sorted) if r[0] == top_bucket), None)
+    total = sum(p for _, p, _ in rows)
+    implied = sum(center * (p / total) for _, p, center in rows) if total > 0 else None
+    return {
+        "implied": round(implied, 2) if implied is not None else None,
+        "top_bucket": top_bucket,
+        "top_price": round(top_price, 4),
+        "n": len(rows),
+        "bucket_labels": [r[0] for r in rows_sorted],
+        "bucket_prices": [round(r[1], 4) for r in rows_sorted],
+        "top_bucket_index": top_bucket_index,
+        "bucket_unit": infer_bucket_unit([r[0] for r in rows_sorted]),
+    }
+
+
+def recompute_poly_from_label_price_pairs(labels: list, prices: list) -> dict[str, Any]:
+    """
+    Recompute stored snapshot Polymarket fields from parallel label/price arrays (e.g. DB backfill).
+    Uses the same rules as live fetch: probability in (0, 1], ties broken toward warmer bucket.
+    """
+    rows: list[tuple[str, float, float]] = []
+    n_in = min(len(labels or []), len(prices or []))
+    for i in range(n_in):
+        label = str(labels[i] or "")
+        try:
+            raw_p = float(prices[i])
+        except (TypeError, ValueError):
+            continue
+        p = _clamp_unit_probability(raw_p)
+        if p is None or p <= 0:
+            continue
+        lo, hi = _parse_bucket(label)
+        center = _bucket_center(lo, hi)
+        if center is not None:
+            rows.append((label, p, center))
+    return _aggregate_poly_rows(rows)
 
 
 def _extract_station_code_from_url(url: str) -> str | None:
@@ -394,45 +456,17 @@ async def fetch_polymarket_implied(event_slug: str, target: date) -> dict:
         label = slug.split(f"on-{date_frag}-")[-1]
         price = m.get("bestAsk") or m.get("outcomePrices", [None])[0]
         try:
-            p = float(price) if price is not None else math.nan
+            raw_p = float(price) if price is not None else math.nan
         except (TypeError, ValueError):
-            p = math.nan
-        if not (0.0 < p < 1.0):
+            raw_p = math.nan
+        p = _clamp_unit_probability(raw_p)
+        if p is None or p <= 0:
             continue
         lo, hi = _parse_bucket(label)
         center = _bucket_center(lo, hi)
         if center is not None:
             rows.append((label, p, center))
-    if not rows:
-        return {
-            "implied": None,
-            "top_bucket": None,
-            "top_price": None,
-            "n": 0,
-            "bucket_labels": [],
-            "bucket_prices": [],
-            "top_bucket_index": None,
-            "bucket_unit": None,
-        }
-
-    rows_sorted = sorted(rows, key=lambda x: x[2])
-    top_bucket, top_price, _ = max(rows, key=lambda x: x[1])
-    top_bucket_index = next((i for i, r in enumerate(rows_sorted) if r[0] == top_bucket), None)
-
-    # Weighted average: normalize prices so they sum to 1.0 before computing implied temp
-    total = sum(p for _, p, _ in rows)
-    implied = sum(center * (p / total) for _, p, center in rows) if total > 0 else None
-
-    return {
-        "implied": round(implied, 2) if implied is not None else None,
-        "top_bucket": top_bucket,
-        "top_price": round(top_price, 4),
-        "n": len(rows),
-        "bucket_labels": [r[0] for r in rows_sorted],
-        "bucket_prices": [round(r[1], 4) for r in rows_sorted],
-        "top_bucket_index": top_bucket_index,
-        "bucket_unit": infer_bucket_unit([r[0] for r in rows_sorted]),
-    }
+    return _aggregate_poly_rows(rows)
 
 
 def _parse_json_list_field(raw: object) -> list:
