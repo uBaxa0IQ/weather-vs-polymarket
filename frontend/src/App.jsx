@@ -173,8 +173,13 @@ function resolvedOutcomeBand(pmLabel, labels, extent) {
   const rawLabel = String(labels[idx]);
   const s = rawLabel.toLowerCase().replace(/\s+/g, "");
   const p = parseBucket(rawLabel);
+  const bucketUnit = inferBucketUnit(labels);
   const isOpenEnded =
     s.includes("orbelow") || s.includes("forbelow") || s.includes("orhigher") || s.includes("forhigher");
+  const isRangeBucket =
+    p.lo != null
+    && p.hi != null
+    && p.hi > p.lo;
   const isSingleDiscrete =
     !isOpenEnded
     && p.lo != null
@@ -186,7 +191,15 @@ function resolvedOutcomeBand(pmLabel, labels, extent) {
 
   let y1;
   let y2;
-  if (isSingleDiscrete) {
+  if (isOpenEnded) {
+    // Open-ended resolved buckets must fill to chart boundary.
+    y1 = p.lo == null ? emin : p.lo;
+    y2 = p.hi == null ? emax : p.hi;
+  } else if (bucketUnit === "F" && isRangeBucket) {
+    // For Fahrenheit range labels like "84-85f", render exact band bounds.
+    y1 = p.lo;
+    y2 = p.hi;
+  } else if (isSingleDiscrete) {
     const c = p.lo;
     y1 = c - 0.5;
     y2 = c + 0.5;
@@ -194,14 +207,6 @@ function resolvedOutcomeBand(pmLabel, labels, extent) {
     const b = bucketBounds(labels, idx);
     y1 = b.lo != null ? b.lo : emin;
     y2 = b.hi != null ? b.hi : emax;
-    if (b.lo == null && b.hi != null) {
-      y1 = emin;
-      y2 = b.hi;
-    }
-    if (b.lo != null && b.hi == null) {
-      y1 = b.lo;
-      y2 = emax;
-    }
   }
 
   y1 = Math.max(emin, Math.min(y1, emax));
@@ -280,24 +285,9 @@ function axisProps(orientation = "left") {
 
 // ─── Pipeline control panel ───────────────────────────────────────────────────
 
-function PipelineControl({ health, onAction }) {
-  const [busy, setBusy] = useState(false);
-
-  async function act(endpoint) {
-    setBusy(true);
-    try {
-      await apiFetch(`/ops/scheduler/${endpoint}`, { method: "POST" });
-      onAction();
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function PipelineControl({ health }) {
   const sched = health?.scheduler ?? {};
   const isRunning = sched.is_running;
-  const apiSchedulerEnabled = sched.api_scheduler_enabled !== false;
   const lastRun = health?.last_run;
 
   return (
@@ -331,34 +321,6 @@ function PipelineControl({ health, onAction }) {
         </div>
       )}
 
-      <div className="btn-row">
-        <button
-          className="btn btn-primary"
-          disabled={busy || isRunning || !apiSchedulerEnabled}
-          onClick={() => act("trigger")}
-          title={apiSchedulerEnabled ? "Run pipeline once immediately" : "Disabled: worker owns pipeline runs"}
-        >
-          ▶ Run once
-        </button>
-        {!isRunning ? (
-          <button
-            className="btn btn-success"
-            disabled={busy || !apiSchedulerEnabled}
-            onClick={() => act("start")}
-            title={apiSchedulerEnabled ? "Start auto-loop every hour" : "Disabled: worker owns pipeline runs"}
-          >
-            ⟳ Start loop
-          </button>
-        ) : (
-          <button
-            className="btn btn-danger"
-            disabled={busy}
-            onClick={() => act("stop")}
-          >
-            ■ Stop
-          </button>
-        )}
-      </div>
     </div>
   );
 }
@@ -535,6 +497,103 @@ function CityForecastDeviationChart({ data }) {
             <Line type="monotone" dataKey="mean_abs_dev" stroke={CHART_THEME.tomorrow} dot={false} name="Average" strokeWidth={2.2} />
             <Line type="monotone" dataKey="p90_abs_dev" stroke={CHART_THEME.topBucketValue} dot={false} name="P90" strokeWidth={1.8} />
             <Line type="monotone" dataKey="max_abs_dev" stroke="#ff7b72" dot={false} name="Max" strokeWidth={1.6} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function TopBucketCalibrationChart({ data, binPct, onChangeBinPct }) {
+  const bins = data?.bins || [];
+  if (!bins.length) {
+    return (
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Top-1 probability calibration</span>
+          <span className="card-subtitle">bin: {binPct}%</span>
+        </div>
+        <div className="empty-state" style={{ height: 180 }}>
+          <p>No resolved snapshot data for calibration yet.</p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <div className="card-header" style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div>
+          <span className="card-title">Top-1 probability calibration</span>
+          <span className="card-subtitle">{`samples: ${data.total_samples} · ECE ${((data.ece ?? 0) * 100).toFixed(2)}% · Brier ${(data.brier ?? 0).toFixed(4)}`}</span>
+        </div>
+        <div className="btn-row">
+          <button type="button" className={`btn ${binPct === 1 ? "btn-primary" : ""}`} onClick={() => onChangeBinPct(1)}>1%</button>
+          <button type="button" className={`btn ${binPct === 5 ? "btn-primary" : ""}`} onClick={() => onChangeBinPct(5)}>5%</button>
+        </div>
+      </div>
+      <div className="card-body chart-wrap">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={bins} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+            <XAxis dataKey="bin_mid" {...axisProps("bottom")} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+            <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+            <Tooltip
+              content={(
+                <ChartTooltip
+                  labelFormatter={(v) => `Pred ${Math.round(v * 100)}%`}
+                  valueFormatter={(v) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—")}
+                  metaFormatter={(row) => (
+                    row?.samples_count != null ? `n=${row.samples_count}` : null
+                  )}
+                />
+              )}
+            />
+            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+            <Line type="monotone" dataKey="ideal_prob" stroke="#8b949e" dot={false} name="Ideal (y=x)" strokeWidth={1.5} />
+            <Line type="monotone" dataKey="observed_hit_rate" stroke={CHART_THEME.topBucketValue} dot={false} name="Observed hit rate" strokeWidth={2.3} />
+            <Line type="monotone" dataKey="predicted_mean" stroke={CHART_THEME.poly} dot={false} name="Predicted mean" strokeWidth={1.7} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function TopBucketProbabilityVsTimeChart({ data }) {
+  if (!data?.length) {
+    return (
+      <div className="empty-state" style={{ height: 200 }}>
+        <p>No top-1 probability data yet.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <div className="card-header">
+        <span className="card-title">Top-1 bucket probability vs time</span>
+        <span className="card-subtitle">{data.length} buckets</span>
+      </div>
+      <div className="card-body chart-wrap">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+            <XAxis dataKey="bucket_h" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
+            <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+            <Tooltip
+              content={(
+                <ChartTooltip
+                  labelFormatter={(v) => `${v}h to resolve`}
+                  valueFormatter={(v) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—")}
+                  metaFormatter={(row) => (
+                    row?.samples_count != null ? `${row.samples_count} records` : null
+                  )}
+                />
+              )}
+            />
+            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+            <Line type="monotone" dataKey="mean_top_bucket_prob" stroke={CHART_THEME.topBucketValue} dot={false} name="Mean" strokeWidth={2.2} />
+            <Line type="monotone" dataKey="p50_top_bucket_prob" stroke={CHART_THEME.poly} dot={false} name="P50" strokeWidth={1.8} />
+            <Line type="monotone" dataKey="p90_top_bucket_prob" stroke="#7ee787" dot={false} name="P90" strokeWidth={1.8} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -892,6 +951,9 @@ export function App() {
   const [strategyCurves, setStrategyCurves] = useState([]);
   const [topBucketHitVsTime, setTopBucketHitVsTime] = useState([]);
   const [cityDeviation, setCityDeviation] = useState([]);
+  const [calibrationBinPct, setCalibrationBinPct] = useState(() => Number(loadStored("calibrationBinPct", 5)) === 1 ? 1 : 5);
+  const [topBucketCalibration, setTopBucketCalibration] = useState(null);
+  const [topBucketProbVsTime, setTopBucketProbVsTime] = useState([]);
   const [view, setView] = useState(() => loadStored("view", "markets"));
   const [selectedSlug, setSelectedSlug] = useState(() => loadStored("selectedSlug", ""));
   const [cityFilter, setCityFilter] = useState(() => loadStored("cityFilter", ""));
@@ -917,6 +979,18 @@ export function App() {
       .catch(console.error);
   }, []);
 
+  const fetchTopBucketCalibration = useCallback((binPct) => {
+    apiFetch(`/analytics/top-bucket-calibration?bin_pct=${binPct}`)
+      .then(setTopBucketCalibration)
+      .catch(console.error);
+  }, []);
+
+  const fetchTopBucketProbVsTime = useCallback(() => {
+    apiFetch("/analytics/top-bucket-probability-vs-time")
+      .then(setTopBucketProbVsTime)
+      .catch(console.error);
+  }, []);
+
   const fetchMarkets = useCallback(() => {
     setMarketsLoading(true);
     const params = cityFilter ? `?city=${encodeURIComponent(cityFilter)}` : "";
@@ -929,6 +1003,7 @@ export function App() {
   useEffect(() => { saveStored("view", view); }, [view]);
   useEffect(() => { saveStored("selectedSlug", selectedSlug); }, [selectedSlug]);
   useEffect(() => { saveStored("cityFilter", cityFilter); }, [cityFilter]);
+  useEffect(() => { saveStored("calibrationBinPct", calibrationBinPct); }, [calibrationBinPct]);
 
   // Initial data load
   useEffect(() => {
@@ -937,6 +1012,8 @@ export function App() {
     fetchStrategyCurves();
     fetchTopBucketHitVsTime();
     fetchCityDeviation();
+    fetchTopBucketCalibration(calibrationBinPct);
+    fetchTopBucketProbVsTime();
   }, []);
 
   // Re-fetch markets when city filter changes
@@ -947,8 +1024,10 @@ export function App() {
       fetchStrategyCurves();
       fetchTopBucketHitVsTime();
       fetchCityDeviation();
+      fetchTopBucketCalibration(calibrationBinPct);
+      fetchTopBucketProbVsTime();
     }
-  }, [view, fetchStrategyCurves, fetchTopBucketHitVsTime, fetchCityDeviation]);
+  }, [view, fetchStrategyCurves, fetchTopBucketHitVsTime, fetchCityDeviation, fetchTopBucketCalibration, calibrationBinPct, fetchTopBucketProbVsTime]);
 
   // Poll health every 30 s
   useInterval(fetchHealth, 30_000);
@@ -1017,16 +1096,7 @@ export function App() {
             </button>
           </div>
 
-          <PipelineControl
-            health={health}
-            onAction={() => {
-              fetchHealth();
-              fetchMarkets();
-              fetchStrategyCurves();
-              fetchTopBucketHitVsTime();
-              fetchCityDeviation();
-            }}
-          />
+          <PipelineControl health={health} />
 
           {/* City filter */}
           <div className="market-filter">
@@ -1091,6 +1161,16 @@ export function App() {
               </div>
               <div style={{ marginTop: 12 }}>
                 <CityForecastDeviationChart data={cityDeviation} />
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <TopBucketCalibrationChart
+                  data={topBucketCalibration}
+                  binPct={calibrationBinPct}
+                  onChangeBinPct={setCalibrationBinPct}
+                />
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <TopBucketProbabilityVsTimeChart data={topBucketProbVsTime} />
               </div>
             </section>
           )}

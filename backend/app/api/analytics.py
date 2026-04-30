@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,3 +41,18 @@ async def city_forecast_deviation(
 ) -> list[dict]:
     value_col = "tomorrow_max" if model == "tomorrow" else "ecmwf_max"
     return await analytics_repo.get_city_forecast_deviation_summary(session, value_col)
+
+
+@router.get("/top-bucket-calibration")
+async def top_bucket_calibration(
+    bin_pct: Annotated[Literal[1, 5], Query()] = 5,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    return await analytics_repo.get_top_bucket_calibration(session, bin_pct)
+
+
+@router.get("/top-bucket-probability-vs-time")
+async def top_bucket_probability_vs_time(
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    return await analytics_repo.get_top_bucket_probability_vs_time(session)
