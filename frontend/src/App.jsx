@@ -131,9 +131,9 @@ function bucketBounds(labels, idx) {
 function bucketCenterFromLabel(label) {
   const { lo, hi } = parseBucket(label);
   if (lo != null && hi != null) return (lo + hi) / 2;
-  // Match backend _bucket_center (external.py) for chart vs implied consistency.
-  if (lo == null && hi != null) return hi - 1;
-  if (lo != null && hi == null) return lo + 1;
+  // For open-ended buckets, render exactly at the threshold value.
+  if (lo == null && hi != null) return hi;
+  if (lo != null && hi == null) return lo;
   return null;
 }
 
