@@ -7,6 +7,7 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,6 +16,32 @@ import {
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+const LS_KEY = "weather-vsp:v1";
+function loadStored(key, fallback) {
+  try {
+    const raw = localStorage.getItem(`${LS_KEY}:${key}`);
+    if (raw == null) return fallback;
+    if (typeof fallback === "string") return raw;
+    if (typeof fallback === "object" && fallback !== null && !Array.isArray(fallback)) {
+      return { ...fallback, ...JSON.parse(raw) };
+    }
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+function saveStored(key, value) {
+  try {
+    if (typeof value === "string") {
+      localStorage.setItem(`${LS_KEY}:${key}`, value);
+    } else {
+      localStorage.setItem(`${LS_KEY}:${key}`, JSON.stringify(value));
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 // ─── HTTP helpers ────────────────────────────────────────────────────────────
 
@@ -127,6 +154,59 @@ function bucketIndexForTemp(temp, labels) {
     return labels.length - 1;
   }
   return null;
+}
+
+function findWinningLabelIndex(pmLabel, labels) {
+  if (pmLabel == null || !Array.isArray(labels) || labels.length === 0) return -1;
+  const raw = String(pmLabel).trim();
+  const compact = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, "").replace("deg", "");
+  let i = labels.findIndex((l) => norm(l) === norm(raw));
+  if (i >= 0) return i;
+  return labels.findIndex((l) => String(l).toLowerCase().replace(/[^a-z0-9]/g, "") === compact);
+}
+
+/** Shaded band [y1,y2] in chart temp units for resolved PM bucket; clips to chart extent. */
+function resolvedOutcomeBand(pmLabel, labels, extent) {
+  if (!extent || !labels?.length) return null;
+  const idx = findWinningLabelIndex(pmLabel, labels);
+  if (idx < 0) return null;
+  const b = bucketBounds(labels, idx);
+  const emin = extent.min;
+  const emax = extent.max;
+  let y1 = b.lo != null ? b.lo : emin;
+  let y2 = b.hi != null ? b.hi : emax;
+  if (b.lo == null && b.hi != null) {
+    y1 = emin;
+    y2 = b.hi;
+  }
+  if (b.lo != null && b.hi == null) {
+    y1 = b.lo;
+    y2 = emax;
+  }
+  y1 = Math.max(emin, Math.min(y1, emax));
+  y2 = Math.max(emin, Math.min(y2, emax));
+  if (y2 <= y1) {
+    const pad = (emax - emin) * 0.02 || 0.5;
+    y2 = Math.min(emax, y1 + pad);
+  }
+  return { y1, y2 };
+}
+
+function chartTempExtent(rows) {
+  let mn = Infinity;
+  let mx = -Infinity;
+  for (const r of rows || []) {
+    [r.tomorrow_max, r.ecmwf_max, r.poly_implied, r.top_bucket_value].forEach((v) => {
+      if (typeof v === "number" && !Number.isNaN(v)) {
+        mn = Math.min(mn, v);
+        mx = Math.max(mx, v);
+      }
+    });
+  }
+  if (!Number.isFinite(mn)) return null;
+  const pad = (mx - mn) * 0.08 || 3;
+  return { min: mn - pad, max: mx + pad };
 }
 
 // ─── Custom Recharts tooltip ─────────────────────────────────────────────────
@@ -304,14 +384,20 @@ function StrategyCurves({ data }) {
   }
 
   const charts = [
-    { title: "Main bucket hit probability", k1: "tomorrow_main", k2: "ecmwf_main" },
-    { title: "Main ±1 bucket hit probability", k1: "tomorrow_main_plus_1", k2: "ecmwf_main_plus_1" },
-    { title: "Main ±2 buckets hit probability", k1: "tomorrow_main_plus_2", k2: "ecmwf_main_plus_2" },
+    { title: "Main bucket hit probability", k1: "tomorrow_main", k2: "ecmwf_main", solo: false },
+    { title: "Main ±1 bucket hit probability", k1: "tomorrow_main_plus_1", k2: "ecmwf_main_plus_1", solo: false },
+    { title: "Main ±2 buckets hit probability", k1: "tomorrow_main_plus_2", k2: "ecmwf_main_plus_2", solo: false },
+    {
+      title: "Polymarket top-1 vs final bucket",
+      k1: "poly_main",
+      k2: null,
+      solo: true,
+    },
   ];
 
   return (
     <div className="charts-grid">
-      {charts.map(({ title, k1, k2 }) => (
+      {charts.map(({ title, k1, k2, solo }) => (
         <div key={title} className="card">
           <div className="card-header">
             <span className="card-title">{title}</span>
@@ -334,8 +420,10 @@ function StrategyCurves({ data }) {
                   )}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-                <Line type="monotone" dataKey={k1} stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
-                <Line type="monotone" dataKey={k2} stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
+                <Line type="monotone" dataKey={k1} stroke={solo ? CHART_THEME.poly : CHART_THEME.tomorrow} dot={false} name={solo ? "Poly top-1" : "Tomorrow"} strokeWidth={2} />
+                {!solo && k2 && (
+                  <Line type="monotone" dataKey={k2} stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -351,12 +439,13 @@ function MarketDetail({ slug, market }) {
   const [timeseries, setTimeseries] = useState(null);
   const [selectedSnapshotTime, setSelectedSnapshotTime] = useState(null);
   const [error, setError] = useState(null);
-  const [visibleSeries, setVisibleSeries] = useState({
-    tomorrow: true,
-    ecmwf: true,
-    poly: true,
-    topBucket: true,
-  });
+  const [visibleSeries, setVisibleSeries] = useState(() =>
+    loadStored("chartSeries", { tomorrow: true, ecmwf: true, poly: true, topBucket: true }),
+  );
+
+  useEffect(() => {
+    saveStored("chartSeries", visibleSeries);
+  }, [visibleSeries]);
 
   useEffect(() => {
     if (!slug) return;
@@ -389,6 +478,20 @@ function MarketDetail({ slug, market }) {
     })),
     [timeseries],
   );
+  const tempExtent = useMemo(() => chartTempExtent(chartSeries), [chartSeries]);
+  const resolveLabels = useMemo(() => {
+    if (!Array.isArray(timeseries) || !market?.pm_winning_label) return [];
+    for (let i = timeseries.length - 1; i >= 0; i -= 1) {
+      const L = timeseries[i].bucket_labels_json;
+      if (Array.isArray(L) && findWinningLabelIndex(market.pm_winning_label, L) >= 0) return L;
+    }
+    const last = timeseries[timeseries.length - 1];
+    return last?.bucket_labels_json || [];
+  }, [timeseries, market?.pm_winning_label]);
+  const outcomeBand = useMemo(() => {
+    if (market?.status !== "pm_resolved" || !market?.pm_winning_label || !tempExtent) return null;
+    return resolvedOutcomeBand(market.pm_winning_label, resolveLabels, tempExtent);
+  }, [market?.status, market?.pm_winning_label, resolveLabels, tempExtent]);
   const selectedSnapshot = useMemo(() => {
     if (!Array.isArray(timeseries) || timeseries.length === 0) return null;
     return (
@@ -517,7 +620,23 @@ function MarketDetail({ slug, market }) {
                 <LineChart data={chartSeries} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
                   <XAxis dataKey="captured_at_utc" hide />
-                  <YAxis yAxisId="temp" {...axisProps()} />
+                  <YAxis
+                    yAxisId="temp"
+                    {...axisProps()}
+                    domain={tempExtent ? [tempExtent.min, tempExtent.max] : undefined}
+                  />
+                  {outcomeBand && (
+                    <ReferenceArea
+                      yAxisId="temp"
+                      y1={outcomeBand.y1}
+                      y2={outcomeBand.y2}
+                      fill={CHART_THEME.poly}
+                      fillOpacity={0.14}
+                      stroke={CHART_THEME.poly}
+                      strokeOpacity={0.45}
+                      strokeDasharray="4 4"
+                    />
+                  )}
                   <Tooltip content={<ChartTooltip labelFormatter={fmtDateTime} valueFormatter={(v) => fmtTemp(v, selectedUnit)} />} />
                   <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
                   {visibleSeries.tomorrow && (
@@ -662,12 +781,17 @@ export function App() {
   const [marketsLoading, setMarketsLoading] = useState(true);
   const [health, setHealth] = useState(null);
   const [strategyCurves, setStrategyCurves] = useState([]);
-  const [selectedSlug, setSelectedSlug] = useState("");
-  const [cityFilter, setCityFilter] = useState("");
+  const [view, setView] = useState(() => loadStored("view", "markets"));
+  const [selectedSlug, setSelectedSlug] = useState(() => loadStored("selectedSlug", ""));
+  const [cityFilter, setCityFilter] = useState(() => loadStored("cityFilter", ""));
   const [marketsError, setMarketsError] = useState(null);
 
   const fetchHealth = useCallback(() => {
     apiFetch("/ops/pipeline-health").then(setHealth).catch(console.error);
+  }, []);
+
+  const fetchStrategyCurves = useCallback(() => {
+    apiFetch("/analytics/strategy-curves").then(setStrategyCurves).catch(console.error);
   }, []);
 
   const fetchMarkets = useCallback(() => {
@@ -679,15 +803,23 @@ export function App() {
       .finally(() => setMarketsLoading(false));
   }, [cityFilter]);
 
+  useEffect(() => { saveStored("view", view); }, [view]);
+  useEffect(() => { saveStored("selectedSlug", selectedSlug); }, [selectedSlug]);
+  useEffect(() => { saveStored("cityFilter", cityFilter); }, [cityFilter]);
+
   // Initial data load
   useEffect(() => {
     fetchHealth();
     fetchMarkets();
-    apiFetch("/analytics/strategy-curves").then(setStrategyCurves).catch(console.error);
+    fetchStrategyCurves();
   }, []);
 
   // Re-fetch markets when city filter changes
   useEffect(() => { fetchMarkets(); }, [fetchMarkets]);
+
+  useEffect(() => {
+    if (view === "dashboard") fetchStrategyCurves();
+  }, [view, fetchStrategyCurves]);
 
   // Poll health every 30 s
   useInterval(fetchHealth, 30_000);
@@ -723,7 +855,47 @@ export function App() {
       <div className="app-body">
         {/* ── Sidebar ── */}
         <aside className="sidebar">
-          <PipelineControl health={health} onAction={() => { fetchHealth(); fetchMarkets(); }} />
+          <div className="sidebar-nav" role="navigation" aria-label="App views">
+            <button
+              type="button"
+              className={`nav-square${view === "dashboard" ? " active" : ""}`}
+              title="Dashboard — analytics"
+              aria-pressed={view === "dashboard"}
+              onClick={() => setView("dashboard")}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" />
+                <rect x="14" y="14" width="7" height="7" rx="1" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`nav-square${view === "markets" ? " active" : ""}`}
+              title="Markets"
+              aria-pressed={view === "markets"}
+              onClick={() => setView("markets")}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          <PipelineControl
+            health={health}
+            onAction={() => {
+              fetchHealth();
+              fetchMarkets();
+              fetchStrategyCurves();
+            }}
+          />
 
           {/* City filter */}
           <div className="market-filter">
@@ -740,60 +912,67 @@ export function App() {
           </div>
 
           {/* Market list */}
-          <div className="market-list">
-            {marketsError ? (
-              <div className="empty-state">
-                <p style={{ color: "var(--red)" }}>{marketsError}</p>
-              </div>
-            ) : marketsLoading ? (
-              <div style={{ padding: 16 }}>
-                {[...Array(6)].map((_, i) => (
-                  <div key={i} className="skeleton" style={{ height: 68, marginBottom: 6, borderRadius: 6 }} />
-                ))}
-              </div>
-            ) : markets.length === 0 ? (
-              <div className="empty-state" style={{ padding: 20 }}>
-                <p>No markets yet</p>
-              </div>
-            ) : (
-              markets.map((m) => (
-                <MarketCard
-                  key={m.event_slug}
-                  market={m}
-                  selected={selectedSlug === m.event_slug}
-                  onClick={setSelectedSlug}
-                />
-              ))
-            )}
-          </div>
+          {view === "markets" && (
+            <div className="market-list">
+              {marketsError ? (
+                <div className="empty-state">
+                  <p style={{ color: "var(--red)" }}>{marketsError}</p>
+                </div>
+              ) : marketsLoading ? (
+                <div style={{ padding: 16 }}>
+                  {[...Array(6)].map((_, i) => (
+                    <div key={i} className="skeleton" style={{ height: 68, marginBottom: 6, borderRadius: 6 }} />
+                  ))}
+                </div>
+              ) : markets.length === 0 ? (
+                <div className="empty-state" style={{ padding: 20 }}>
+                  <p>No markets yet</p>
+                </div>
+              ) : (
+                markets.map((m) => (
+                  <MarketCard
+                    key={m.event_slug}
+                    market={m}
+                    selected={selectedSlug === m.event_slug}
+                    onClick={(slug) => {
+                      setSelectedSlug(slug);
+                      setView("markets");
+                    }}
+                  />
+                ))
+              )}
+            </div>
+          )}
         </aside>
 
         {/* ── Main ── */}
         <main className="main">
-          {/* Strategy curves — always visible */}
-          <section>
-            <div style={{ marginBottom: 12 }}>
-              <div className="section-label" style={{ fontSize: 11 }}>
-                Analytics · Hit probability vs hours to resolution
-              </div>
-            </div>
-            <StrategyCurves data={strategyCurves} />
-          </section>
-
-          <hr className="divider" />
-
-          {/* Market detail */}
-          {!selectedSlug ? (
-            <div className="empty-state">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-              </svg>
-              <p>Select a market from the sidebar</p>
-            </div>
-          ) : (
+          {view === "dashboard" && (
             <section>
-              <MarketDetail slug={selectedSlug} market={selectedMarket} />
+              <div style={{ marginBottom: 12 }}>
+                <div className="section-label" style={{ fontSize: 11 }}>
+                  Analytics · Hit probability vs hours to resolution
+                </div>
+              </div>
+              <StrategyCurves data={strategyCurves} />
             </section>
+          )}
+
+          {view === "markets" && (
+            <>
+              {!selectedSlug ? (
+                <div className="empty-state">
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                  </svg>
+                  <p>Select a market from the sidebar</p>
+                </div>
+              ) : (
+                <section>
+                  <MarketDetail slug={selectedSlug} market={selectedMarket} />
+                </section>
+              )}
+            </>
           )}
         </main>
       </div>

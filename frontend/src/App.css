@@ -105,6 +105,39 @@ body {
 }
 
 /* ─── Sidebar ────────────────────────────────────────────────────────────── */
+.sidebar-nav {
+  display: flex;
+  gap: 8px;
+  padding: 12px 12px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.nav-square {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.nav-square:hover {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+.nav-square.active {
+  color: var(--green);
+  border-color: var(--green-dim);
+  background: rgba(63, 185, 80, 0.12);
+}
+
 .sidebar {
   background: var(--bg-1);
   border-right: 1px solid var(--border);

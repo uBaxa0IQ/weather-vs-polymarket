@@ -133,6 +133,7 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         lambda: {
             "tomorrow_main": [],
             "ecmwf_main": [],
+            "poly_main": [],
             "tomorrow_main_plus_1": [],
             "ecmwf_main_plus_1": [],
             "tomorrow_main_plus_2": [],
@@ -174,8 +175,10 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
             tomorrow_main_plus_2_idxs = _pred_plus_up_down(tomorrow_pred, len(labels))
             ecmwf_main_plus_2_idxs = _pred_plus_up_down(ecmwf_pred, len(labels))
+            poly_pred = int(snap["top_bucket_index"]) if snap.get("top_bucket_index") is not None else None
             agg[t_bucket]["tomorrow_main"].append(_hit(tomorrow_pred, final_idx, 0))
             agg[t_bucket]["ecmwf_main"].append(_hit(ecmwf_pred, final_idx, 0))
+            agg[t_bucket]["poly_main"].append(_hit(poly_pred, final_idx, 0))
             agg[t_bucket]["tomorrow_main_plus_1"].append(_hit_any(tomorrow_main_plus_1_idxs, final_idx))
             agg[t_bucket]["ecmwf_main_plus_1"].append(_hit_any(ecmwf_main_plus_1_idxs, final_idx))
             agg[t_bucket]["tomorrow_main_plus_2"].append(_hit_any(tomorrow_main_plus_2_idxs, final_idx))
@@ -190,6 +193,7 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "samples_count": len(m["tomorrow_main"]),
                 "tomorrow_main": sum(m["tomorrow_main"]) / len(m["tomorrow_main"]) if m["tomorrow_main"] else None,
                 "ecmwf_main": sum(m["ecmwf_main"]) / len(m["ecmwf_main"]) if m["ecmwf_main"] else None,
+                "poly_main": sum(m["poly_main"]) / len(m["poly_main"]) if m["poly_main"] else None,
                 "tomorrow_main_plus_1": (
                     sum(m["tomorrow_main_plus_1"]) / len(m["tomorrow_main_plus_1"])
                     if m["tomorrow_main_plus_1"]
