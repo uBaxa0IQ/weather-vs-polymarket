@@ -171,19 +171,40 @@ function resolvedOutcomeBand(pmLabel, labels, extent) {
   if (!extent || !labels?.length) return null;
   const idx = findWinningLabelIndex(pmLabel, labels);
   if (idx < 0) return null;
-  const b = bucketBounds(labels, idx);
+  const rawLabel = String(labels[idx]);
+  const s = rawLabel.toLowerCase().replace(/\s+/g, "");
+  const p = parseBucket(rawLabel);
+  const isOpenEnded =
+    s.includes("orbelow") || s.includes("forbelow") || s.includes("orhigher") || s.includes("forhigher");
+  const isSingleDiscrete =
+    !isOpenEnded
+    && p.lo != null
+    && p.hi != null
+    && Math.abs(p.lo - p.hi) < 1e-9;
+
   const emin = extent.min;
   const emax = extent.max;
-  let y1 = b.lo != null ? b.lo : emin;
-  let y2 = b.hi != null ? b.hi : emax;
-  if (b.lo == null && b.hi != null) {
-    y1 = emin;
-    y2 = b.hi;
+
+  let y1;
+  let y2;
+  if (isSingleDiscrete) {
+    const c = p.lo;
+    y1 = c - 0.5;
+    y2 = c + 0.5;
+  } else {
+    const b = bucketBounds(labels, idx);
+    y1 = b.lo != null ? b.lo : emin;
+    y2 = b.hi != null ? b.hi : emax;
+    if (b.lo == null && b.hi != null) {
+      y1 = emin;
+      y2 = b.hi;
+    }
+    if (b.lo != null && b.hi == null) {
+      y1 = b.lo;
+      y2 = emax;
+    }
   }
-  if (b.lo != null && b.hi == null) {
-    y1 = b.lo;
-    y2 = emax;
-  }
+
   y1 = Math.max(emin, Math.min(y1, emax));
   y2 = Math.max(emin, Math.min(y2, emax));
   if (y2 <= y1) {
