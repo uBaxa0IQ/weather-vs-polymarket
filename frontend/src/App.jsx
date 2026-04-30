@@ -593,7 +593,6 @@ function TopBucketProbabilityVsTimeChart({ data }) {
             <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
             <Line type="monotone" dataKey="mean_top_bucket_prob" stroke={CHART_THEME.topBucketValue} dot={false} name="Mean" strokeWidth={2.2} />
             <Line type="monotone" dataKey="p50_top_bucket_prob" stroke={CHART_THEME.poly} dot={false} name="P50" strokeWidth={1.8} />
-            <Line type="monotone" dataKey="p90_top_bucket_prob" stroke="#7ee787" dot={false} name="P90" strokeWidth={1.8} />
           </LineChart>
         </ResponsiveContainer>
       </div>
