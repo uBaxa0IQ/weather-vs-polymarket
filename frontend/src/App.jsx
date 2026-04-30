@@ -453,6 +453,95 @@ function StrategyCurves({ data }) {
   );
 }
 
+function TopBucketHitVsTimeChart({ data }) {
+  if (!data?.length) {
+    return (
+      <div className="empty-state" style={{ height: 200 }}>
+        <p>No resolved markets yet — chart appears after first resolution.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <div className="card-header">
+        <span className="card-title">Top-1 bucket temp hit probability</span>
+        <span className="card-subtitle">{data.length} buckets</span>
+      </div>
+      <div className="card-body chart-wrap">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+            <XAxis dataKey="bucket_h" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
+            <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+            <Tooltip
+              content={(
+                <ChartTooltip
+                  labelFormatter={(v) => `${v}h to resolve`}
+                  metaFormatter={(row) => (
+                    row?.samples_count != null ? `${row.samples_count} records` : null
+                  )}
+                />
+              )}
+            />
+            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+            <Line type="monotone" dataKey="hit_prob" stroke={CHART_THEME.topBucketValue} dot={false} name="Top-1 bucket temp" strokeWidth={2} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function CityForecastDeviationChart({ data }) {
+  if (!data?.length) {
+    return (
+      <div className="empty-state" style={{ height: 220 }}>
+        <p>No snapshot deviation data yet.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <div className="card-header">
+        <span className="card-title">City forecast deviation vs Poly implied</span>
+        <span className="card-subtitle">min / avg / p90 / max by city</span>
+      </div>
+      <div className="card-body chart-wrap">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 40, left: -10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+            <XAxis
+              dataKey="city_slug"
+              {...axisProps("bottom")}
+              interval={0}
+              angle={-35}
+              textAnchor="end"
+              height={60}
+            />
+            <YAxis {...axisProps()} tickFormatter={(v) => `${v.toFixed(1)}°`} />
+            <Tooltip
+              content={(
+                <ChartTooltip
+                  labelFormatter={(v) => String(v)}
+                  valueFormatter={(v) => (typeof v === "number" ? `${v.toFixed(2)}°` : "—")}
+                  metaFormatter={(row) => (
+                    row?.samples_count != null ? `${row.samples_count} snapshots` : null
+                  )}
+                />
+              )}
+            />
+            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+            <Line type="monotone" dataKey="min_abs_dev" stroke="#7ee787" dot={false} name="Min" strokeWidth={1.6} />
+            <Line type="monotone" dataKey="mean_abs_dev" stroke={CHART_THEME.tomorrow} dot={false} name="Average" strokeWidth={2.2} />
+            <Line type="monotone" dataKey="p90_abs_dev" stroke={CHART_THEME.topBucketValue} dot={false} name="P90" strokeWidth={1.8} />
+            <Line type="monotone" dataKey="max_abs_dev" stroke="#ff7b72" dot={false} name="Max" strokeWidth={1.6} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 // ─── Market detail ────────────────────────────────────────────────────────────
 
 function MarketDetail({ slug, market }) {
@@ -801,6 +890,8 @@ export function App() {
   const [marketsLoading, setMarketsLoading] = useState(true);
   const [health, setHealth] = useState(null);
   const [strategyCurves, setStrategyCurves] = useState([]);
+  const [topBucketHitVsTime, setTopBucketHitVsTime] = useState([]);
+  const [cityDeviation, setCityDeviation] = useState([]);
   const [view, setView] = useState(() => loadStored("view", "markets"));
   const [selectedSlug, setSelectedSlug] = useState(() => loadStored("selectedSlug", ""));
   const [cityFilter, setCityFilter] = useState(() => loadStored("cityFilter", ""));
@@ -812,6 +903,18 @@ export function App() {
 
   const fetchStrategyCurves = useCallback(() => {
     apiFetch("/analytics/strategy-curves").then(setStrategyCurves).catch(console.error);
+  }, []);
+
+  const fetchTopBucketHitVsTime = useCallback(() => {
+    apiFetch("/analytics/probability-hit-vs-time?model=top_bucket")
+      .then(setTopBucketHitVsTime)
+      .catch(console.error);
+  }, []);
+
+  const fetchCityDeviation = useCallback(() => {
+    apiFetch("/analytics/city-forecast-deviation?model=tomorrow")
+      .then(setCityDeviation)
+      .catch(console.error);
   }, []);
 
   const fetchMarkets = useCallback(() => {
@@ -832,14 +935,20 @@ export function App() {
     fetchHealth();
     fetchMarkets();
     fetchStrategyCurves();
+    fetchTopBucketHitVsTime();
+    fetchCityDeviation();
   }, []);
 
   // Re-fetch markets when city filter changes
   useEffect(() => { fetchMarkets(); }, [fetchMarkets]);
 
   useEffect(() => {
-    if (view === "dashboard") fetchStrategyCurves();
-  }, [view, fetchStrategyCurves]);
+    if (view === "dashboard") {
+      fetchStrategyCurves();
+      fetchTopBucketHitVsTime();
+      fetchCityDeviation();
+    }
+  }, [view, fetchStrategyCurves, fetchTopBucketHitVsTime, fetchCityDeviation]);
 
   // Poll health every 30 s
   useInterval(fetchHealth, 30_000);
@@ -914,6 +1023,8 @@ export function App() {
               fetchHealth();
               fetchMarkets();
               fetchStrategyCurves();
+              fetchTopBucketHitVsTime();
+              fetchCityDeviation();
             }}
           />
 
@@ -975,6 +1086,12 @@ export function App() {
                 </div>
               </div>
               <StrategyCurves data={strategyCurves} />
+              <div style={{ marginTop: 12 }}>
+                <TopBucketHitVsTimeChart data={topBucketHitVsTime} />
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <CityForecastDeviationChart data={cityDeviation} />
+              </div>
             </section>
           )}
 
