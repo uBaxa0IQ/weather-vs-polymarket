@@ -192,7 +192,9 @@ def _clamp_unit_probability(raw: float) -> float | None:
 
 def _aggregate_poly_rows(rows: list[tuple[str, float, float]]) -> dict[str, Any]:
     """
-    rows: (label, price, center). Prices in (0, 1]; tie-break: higher price, then warmer center.
+    rows: (label, price, center). Prices in (0, 1].
+    Top bucket = max price; if several share max p, pick the bucket whose center is closest
+    to the weighted implied mean (avoids spurious cold/warm spikes when prices are tied).
     """
     if not rows:
         return {
@@ -206,10 +208,23 @@ def _aggregate_poly_rows(rows: list[tuple[str, float, float]]) -> dict[str, Any]
             "bucket_unit": None,
         }
     rows_sorted = sorted(rows, key=lambda x: x[2])
-    top_bucket, top_price, _ = max(rows, key=lambda x: (x[1], x[2]))
-    top_bucket_index = next((i for i, r in enumerate(rows_sorted) if r[0] == top_bucket), None)
     total = sum(p for _, p, _ in rows)
     implied = sum(center * (p / total) for _, p, center in rows) if total > 0 else None
+
+    max_p = max(r[1] for r in rows)
+    eps = 1e-9
+    leaders = [r for r in rows if r[1] + eps >= max_p]
+    if len(leaders) == 1:
+        top_bucket, top_price, _ = leaders[0]
+    elif implied is not None:
+        top_bucket, top_price, _ = min(
+            leaders,
+            key=lambda r: (abs(r[2] - implied), str(r[0])),
+        )
+    else:
+        top_bucket, top_price, _ = max(leaders, key=lambda x: (x[1], x[2]))
+
+    top_bucket_index = next((i for i, r in enumerate(rows_sorted) if r[0] == top_bucket), None)
     return {
         "implied": round(implied, 2) if implied is not None else None,
         "top_bucket": top_bucket,
@@ -225,7 +240,7 @@ def _aggregate_poly_rows(rows: list[tuple[str, float, float]]) -> dict[str, Any]
 def recompute_poly_from_label_price_pairs(labels: list, prices: list) -> dict[str, Any]:
     """
     Recompute stored snapshot Polymarket fields from parallel label/price arrays (e.g. DB backfill).
-    Uses the same rules as live fetch: probability in (0, 1], ties broken toward warmer bucket.
+    Uses the same rules as live fetch: probability in (0, 1]; ties at max p → nearest center to implied.
     """
     rows: list[tuple[str, float, float]] = []
     n_in = min(len(labels or []), len(prices or []))
