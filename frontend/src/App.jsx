@@ -360,7 +360,27 @@ function MarketCard({ market, selected, onClick }) {
 
 // ─── Analytics (strategy curves) ─────────────────────────────────────────────
 
+const STRATEGY_CURVE_SERIES_LS = "strategyCurveSeries";
+const STRATEGY_CURVE_SERIES_DEFAULT = {
+  tomorrow: true,
+  ecmwf: true,
+  polyTomorrow: false,
+  polyEcmwf: false,
+};
+
 function StrategyCurves({ data }) {
+  const [curveSeries, setCurveSeries] = useState(() =>
+    loadStored(STRATEGY_CURVE_SERIES_LS, STRATEGY_CURVE_SERIES_DEFAULT),
+  );
+
+  useEffect(() => {
+    saveStored(STRATEGY_CURVE_SERIES_LS, curveSeries);
+  }, [curveSeries]);
+
+  const toggleCurveSeries = (key) => {
+    setCurveSeries((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   if (!data?.length) {
     return (
       <div className="empty-state" style={{ height: 200 }}>
@@ -405,64 +425,106 @@ function StrategyCurves({ data }) {
   ];
 
   return (
-    <div className="charts-grid">
-      {charts.map(({ title, k1, k2, poly1, poly2, solo }) => (
-        <div key={title} className="card">
-          <div className="card-header">
-            <span className="card-title">{title}</span>
-            <span className="card-subtitle">{`${data.length} buckets`}</span>
-          </div>
-          <div className="card-body chart-wrap">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-                <XAxis dataKey="hours_to_resolve" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
-                <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-                <Tooltip
-                  content={(
-                    <ChartTooltip
-                      labelFormatter={(v) => `${v}h to resolve`}
-                      metaFormatter={(row) => (
-                        row?.samples_count != null ? `${row.samples_count} records` : null
-                      )}
-                    />
-                  )}
-                />
-                <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-                <Line type="monotone" dataKey={k1} stroke={solo ? CHART_THEME.poly : CHART_THEME.tomorrow} dot={false} name={solo ? "Poly top-1" : "Tomorrow"} strokeWidth={2} />
-                {!solo && k2 && (
-                  <Line type="monotone" dataKey={k2} stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
-                )}
-                {!solo && poly1 && (
-                  <Line
-                    type="monotone"
-                    dataKey={poly1}
-                    stroke={CHART_THEME.tomorrow}
-                    dot={false}
-                    name="Tomorrow Σp"
-                    strokeWidth={1.6}
-                    strokeDasharray="6 4"
-                    strokeOpacity={0.85}
-                  />
-                )}
-                {!solo && poly2 && (
-                  <Line
-                    type="monotone"
-                    dataKey={poly2}
-                    stroke={CHART_THEME.ecmwf}
-                    dot={false}
-                    name="ECMWF Σp"
-                    strokeWidth={1.6}
-                    strokeDasharray="6 4"
-                    strokeOpacity={0.85}
-                  />
-                )}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+    <>
+      <div style={{ marginBottom: 10 }}>
+        <div className="series-toggle-row" aria-label="Strategy curves series">
+          <button
+            type="button"
+            className={`series-toggle${curveSeries.tomorrow ? " active" : ""}`}
+            onClick={() => toggleCurveSeries("tomorrow")}
+          >
+            Tomorrow
+          </button>
+          <button
+            type="button"
+            className={`series-toggle${curveSeries.ecmwf ? " active" : ""}`}
+            onClick={() => toggleCurveSeries("ecmwf")}
+          >
+            ECMWF
+          </button>
+          <button
+            type="button"
+            className={`series-toggle${curveSeries.polyTomorrow ? " active" : ""}`}
+            onClick={() => toggleCurveSeries("polyTomorrow")}
+          >
+            Tomorrow Σp
+          </button>
+          <button
+            type="button"
+            className={`series-toggle${curveSeries.polyEcmwf ? " active" : ""}`}
+            onClick={() => toggleCurveSeries("polyEcmwf")}
+          >
+            ECMWF Σp
+          </button>
         </div>
-      ))}
-    </div>
+      </div>
+      <div className="charts-grid">
+        {charts.map(({ title, k1, k2, poly1, poly2, solo }) => (
+          <div key={title} className="card">
+            <div className="card-header">
+              <span className="card-title">{title}</span>
+              <span className="card-subtitle">{`${data.length} buckets`}</span>
+            </div>
+            <div className="card-body chart-wrap">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+                  <XAxis dataKey="hours_to_resolve" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
+                  <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+                  <Tooltip
+                    content={(
+                      <ChartTooltip
+                        labelFormatter={(v) => `${v}h to resolve`}
+                        metaFormatter={(row) => (
+                          row?.samples_count != null ? `${row.samples_count} records` : null
+                        )}
+                      />
+                    )}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+                  {solo ? (
+                    <Line type="monotone" dataKey={k1} stroke={CHART_THEME.poly} dot={false} name="Poly top-1" strokeWidth={2} />
+                  ) : (
+                    <>
+                      {curveSeries.tomorrow && (
+                        <Line type="monotone" dataKey={k1} stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
+                      )}
+                      {curveSeries.ecmwf && k2 && (
+                        <Line type="monotone" dataKey={k2} stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
+                      )}
+                      {curveSeries.polyTomorrow && poly1 && (
+                        <Line
+                          type="monotone"
+                          dataKey={poly1}
+                          stroke={CHART_THEME.tomorrow}
+                          dot={false}
+                          name="Tomorrow Σp"
+                          strokeWidth={1.6}
+                          strokeDasharray="6 4"
+                          strokeOpacity={0.85}
+                        />
+                      )}
+                      {curveSeries.polyEcmwf && poly2 && (
+                        <Line
+                          type="monotone"
+                          dataKey={poly2}
+                          stroke={CHART_THEME.ecmwf}
+                          dot={false}
+                          name="ECMWF Σp"
+                          strokeWidth={1.6}
+                          strokeDasharray="6 4"
+                          strokeOpacity={0.85}
+                        />
+                      )}
+                    </>
+                  )}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
