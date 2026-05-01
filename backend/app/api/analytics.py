@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -45,9 +45,14 @@ async def city_forecast_deviation(
 
 @router.get("/top-bucket-calibration")
 async def top_bucket_calibration(
-    bin_pct: Annotated[Literal[1, 5], Query()] = 5,
+    bin_pct: Annotated[int, Query(description="Histogram bin width in percent; allowed values: 1 or 5")] = 5,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if bin_pct not in (1, 5):
+        raise HTTPException(
+            status_code=422,
+            detail="bin_pct must be 1 or 5",
+        )
     return await analytics_repo.get_top_bucket_calibration(session, bin_pct)
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Numeric, case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Market, MarketSnapshot, PipelineRun
+from app.models import City, Market, MarketSnapshot, PipelineRun
 
 # Columns allowed for the hit-vs-time query — prevents SQL injection at the repo boundary
 _ALLOWED_VALUE_COLS = {"tomorrow_max", "ecmwf_max", "top_bucket_index"}
@@ -116,7 +116,7 @@ async def get_city_forecast_deviation_summary(
 
     q = (
         select(
-            Market.city_slug.label("city_slug"),
+            City.city_slug.label("city_slug"),
             func.count().label("samples_count"),
             func.min(abs_dev).label("min_abs_dev"),
             func.avg(abs_dev).label("mean_abs_dev"),
@@ -124,10 +124,11 @@ async def get_city_forecast_deviation_summary(
             func.percentile_cont(0.5).within_group(abs_dev).label("p50_abs_dev"),
             func.percentile_cont(0.9).within_group(abs_dev).label("p90_abs_dev"),
         )
-        .join(Market)
+        .join(Market, MarketSnapshot.market_id == Market.id)
+        .join(City, Market.city_id == City.id)
         .where(col.isnot(None), MarketSnapshot.poly_implied.isnot(None))
-        .group_by(Market.city_slug)
-        .order_by(Market.city_slug)
+        .group_by(City.city_slug)
+        .order_by(City.city_slug)
     )
     result = await session.execute(q)
     rows = [dict(r._mapping) for r in result.all()]
