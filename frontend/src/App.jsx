@@ -10,6 +10,7 @@ import {
   Pie,
   PieChart,
   ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -417,94 +418,72 @@ function StrategyCurves({ data }) {
   );
 }
 
-function TopBucketHitVsTimeChart({ data }) {
-  if (!data?.length) {
-    return (
-      <div className="empty-state" style={{ height: 200 }}>
-        <p>No resolved markets yet — chart appears after first resolution.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="card">
-      <div className="card-header">
-        <span className="card-title">Top-1 bucket temp hit probability</span>
-        <span className="card-subtitle">{data.length} buckets</span>
-      </div>
-      <div className="card-body chart-wrap">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-            <XAxis dataKey="bucket_h" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
-            <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-            <Tooltip
-              content={(
-                <ChartTooltip
-                  labelFormatter={(v) => `${v}h to resolve`}
-                  metaFormatter={(row) => (
-                    row?.samples_count != null ? `${row.samples_count} records` : null
-                  )}
-                />
-              )}
-            />
-            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-            <Line type="monotone" dataKey="hit_prob" stroke={CHART_THEME.topBucketValue} dot={false} name="Top-1 bucket temp" strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-}
+// TopBucketHitVsTimeChart removed and replaced by TopBucketProbabilityVsTimeChart
 
 function CityDeviationBarTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   const row = payload[0].payload;
-  const fmt = (v) => (typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(2)}°` : "—");
-  const sortedPayload = [...payload].sort((a, b) => {
-    const av = typeof a?.value === "number" ? a.value : Number.NEGATIVE_INFINITY;
-    const bv = typeof b?.value === "number" ? b.value : Number.NEGATIVE_INFINITY;
-    return bv - av;
-  });
+  const fmt = (v) => (typeof v === "number" && Number.isFinite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(2)}°` : "—");
   const title = String(row.city_slug ?? "").replace(/-/g, " ");
   return (
     <div className="chart-tooltip">
       <div className="chart-tooltip-label">{title}</div>
       {row.samples_count != null && (
         <div className="chart-tooltip-label" style={{ color: "var(--text-2)", fontWeight: 500 }}>
-          {row.samples_count} snapshots
+          {row.samples_count} markets
         </div>
       )}
-      {sortedPayload.map((entry) => (
-        <div key={entry.dataKey} className="chart-tooltip-row">
-          <span className="chart-tooltip-dot" style={{ background: entry.color }} />
-          <span style={{ color: "var(--text-2)" }}>{entry.name}</span>
-          <strong style={{ color: "var(--text-1)", marginLeft: "auto", paddingLeft: 12 }}>
-            {fmt(entry.value)}
-          </strong>
-        </div>
-      ))}
-      <div
-        style={{
-          marginTop: 8,
-          paddingTop: 8,
-          borderTop: "1px solid var(--border-subtle)",
-          fontSize: 11,
-          color: "var(--text-2)",
-          lineHeight: 1.45,
-        }}
-      >
-        Range: min {fmt(row.min_abs_dev)} · max {fmt(row.max_abs_dev)}
+      <div style={{ display: "grid", gridTemplateColumns: "auto auto auto", gap: "8px 12px", marginTop: 8 }}>
+        <span style={{ color: CHART_THEME.tomorrow, fontWeight: 500 }}>Tomorrow</span>
+        <span>Mean: {fmt(row.tomorrow_mean)}</span>
+        <span>Range: [{fmt(row.tomorrow_mean_min)}, {fmt(row.tomorrow_mean_max)}]</span>
+        
+        <span style={{ color: CHART_THEME.ecmwf, fontWeight: 500 }}>ECMWF</span>
+        <span>Mean: {fmt(row.ecmwf_mean)}</span>
+        <span>Range: [{fmt(row.ecmwf_mean_min)}, {fmt(row.ecmwf_mean_max)}]</span>
       </div>
     </div>
   );
 }
 
+const CustomErrorBarShape = (props) => {
+  const { x, y, width, height, value, fill, payload, dataKey } = props;
+  if (!value || value.length !== 2) return null;
+  
+  const min = value[0];
+  const max = value[1];
+  const isTomorrow = dataKey === "tomorrow_range";
+  const mean = isTomorrow ? payload.tomorrow_mean : payload.ecmwf_mean;
+  
+  const range = max - min;
+  const meanPct = range === 0 ? 0.5 : (max - mean) / range;
+  const meanY = y + height * meanPct;
+  const centerX = x + width / 2;
+
+  return (
+    <g>
+      <line x1={centerX} y1={y} x2={centerX} y2={y + height} stroke={fill} strokeWidth={2} opacity={0.7} />
+      <line x1={centerX - 4} y1={y} x2={centerX + 4} y2={y} stroke={fill} strokeWidth={2} opacity={0.7} />
+      <line x1={centerX - 4} y1={y + height} x2={centerX + 4} y2={y + height} stroke={fill} strokeWidth={2} opacity={0.7} />
+      <circle cx={centerX} cy={meanY} r={4} fill={fill} />
+    </g>
+  );
+};
+
 function CityForecastDeviationChart({ data }) {
   const sorted = useMemo(
-    () => [...(data ?? [])].sort((a, b) => (b.p50_abs_dev ?? 0) - (a.p50_abs_dev ?? 0)),
+    () => [...(data ?? [])].sort((a, b) => (b.tomorrow_mean ?? 0) - (a.tomorrow_mean ?? 0)),
     [data],
   );
-  if (!sorted.length) {
+  const formattedData = useMemo(() => {
+    return sorted.map((d) => ({
+      ...d,
+      tomorrow_range: [d.tomorrow_mean_min ?? 0, d.tomorrow_mean_max ?? 0],
+      ecmwf_range: [d.ecmwf_mean_min ?? 0, d.ecmwf_mean_max ?? 0],
+    }));
+  }, [sorted]);
+
+  if (!formattedData.length) {
     return (
       <div className="empty-state" style={{ height: 220 }}>
         <p>No snapshot deviation data yet.</p>
@@ -514,15 +493,15 @@ function CityForecastDeviationChart({ data }) {
   return (
     <div className="card">
       <div className="card-header">
-        <span className="card-title">City forecast deviation vs Poly implied</span>
-        <span className="card-subtitle">Grouped bars per city · sorted by median |Δ| · tooltip shows full spread</span>
+        <span className="card-title">City forecast deviation from actual</span>
+        <span className="card-subtitle">Dot shows mean deviation across markets. Whiskers show mean minimum and maximum.</span>
       </div>
-      <div className="card-body chart-wrap" style={{ height: 300 }}>
+      <div className="card-body chart-wrap" style={{ height: 340 }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
-            data={sorted}
-            margin={{ top: 8, right: 10, bottom: 52, left: 4 }}
-            barCategoryGap="14%"
+            data={formattedData}
+            margin={{ top: 12, right: 10, bottom: 52, left: 4 }}
+            barCategoryGap="16%"
           >
             <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} vertical={false} />
             <XAxis
@@ -534,29 +513,23 @@ function CityForecastDeviationChart({ data }) {
               textAnchor="end"
               height={68}
             />
-            <YAxis {...axisProps()} tickFormatter={(v) => `${v}°`} width={36} />
+            <YAxis {...axisProps()} tickFormatter={(v) => `${v > 0 ? "+" : ""}${v}°`} width={44} />
+            <ReferenceLine y={0} stroke="var(--border-subtle, #30363d)" strokeDasharray="3 3" />
             <Tooltip content={<CityDeviationBarTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} iconType="square" />
+            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} iconType="circle" />
             <Bar
-              dataKey="p50_abs_dev"
-              name="Median |Δ|"
+              dataKey="tomorrow_range"
+              name="Tomorrow"
               fill={CHART_THEME.tomorrow}
-              maxBarSize={22}
-              radius={[3, 3, 0, 0]}
+              maxBarSize={16}
+              shape={<CustomErrorBarShape />}
             />
             <Bar
-              dataKey="mean_abs_dev"
-              name="Mean |Δ|"
-              fill={CHART_THEME.poly}
-              maxBarSize={22}
-              radius={[3, 3, 0, 0]}
-            />
-            <Bar
-              dataKey="p90_abs_dev"
-              name="P90 |Δ|"
-              fill={CHART_THEME.topBucketValue}
-              maxBarSize={22}
-              radius={[3, 3, 0, 0]}
+              dataKey="ecmwf_range"
+              name="ECMWF"
+              fill={CHART_THEME.ecmwf}
+              maxBarSize={16}
+              shape={<CustomErrorBarShape />}
             />
           </BarChart>
         </ResponsiveContainer>
@@ -1009,7 +982,6 @@ export function App() {
   const [marketsLoading, setMarketsLoading] = useState(true);
   const [health, setHealth] = useState(null);
   const [strategyCurves, setStrategyCurves] = useState([]);
-  const [topBucketHitVsTime, setTopBucketHitVsTime] = useState([]);
   const [cityDeviation, setCityDeviation] = useState([]);
   const [calibrationBinPct, setCalibrationBinPct] = useState(() => Number(loadStored("calibrationBinPct", 5)) === 1 ? 1 : 5);
   const [topBucketCalibration, setTopBucketCalibration] = useState(null);
@@ -1027,14 +999,8 @@ export function App() {
     apiFetch("/analytics/strategy-curves").then(setStrategyCurves).catch(console.error);
   }, []);
 
-  const fetchTopBucketHitVsTime = useCallback(() => {
-    apiFetch("/analytics/probability-hit-vs-time?model=top_bucket")
-      .then(setTopBucketHitVsTime)
-      .catch(console.error);
-  }, []);
-
   const fetchCityDeviation = useCallback(() => {
-    apiFetch("/analytics/city-forecast-deviation?model=tomorrow")
+    apiFetch("/analytics/city-forecast-deviation")
       .then(setCityDeviation)
       .catch(console.error);
   }, []);
@@ -1070,7 +1036,6 @@ export function App() {
     fetchHealth();
     fetchMarkets();
     fetchStrategyCurves();
-    fetchTopBucketHitVsTime();
     fetchCityDeviation();
     fetchTopBucketCalibration(calibrationBinPct);
     fetchTopBucketProbVsTime();
@@ -1082,12 +1047,11 @@ export function App() {
   useEffect(() => {
     if (view === "dashboard") {
       fetchStrategyCurves();
-      fetchTopBucketHitVsTime();
       fetchCityDeviation();
       fetchTopBucketCalibration(calibrationBinPct);
       fetchTopBucketProbVsTime();
     }
-  }, [view, fetchStrategyCurves, fetchTopBucketHitVsTime, fetchCityDeviation, fetchTopBucketCalibration, calibrationBinPct, fetchTopBucketProbVsTime]);
+  }, [view, fetchStrategyCurves, fetchCityDeviation, fetchTopBucketCalibration, calibrationBinPct, fetchTopBucketProbVsTime]);
 
   // Poll health every 30 s
   useInterval(fetchHealth, 30_000);
@@ -1217,7 +1181,7 @@ export function App() {
               </div>
               <StrategyCurves data={strategyCurves} />
               <div style={{ marginTop: 12 }}>
-                <TopBucketHitVsTimeChart data={topBucketHitVsTime} />
+                <TopBucketProbabilityVsTimeChart data={topBucketProbVsTime} />
               </div>
               <div style={{ marginTop: 12 }}>
                 <CityForecastDeviationChart data={cityDeviation} />
@@ -1228,9 +1192,6 @@ export function App() {
                   binPct={calibrationBinPct}
                   onChangeBinPct={setCalibrationBinPct}
                 />
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <TopBucketProbabilityVsTimeChart data={topBucketProbVsTime} />
               </div>
             </section>
           )}

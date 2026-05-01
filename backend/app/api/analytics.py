@@ -36,11 +36,9 @@ async def strategy_curves(
 
 @router.get("/city-forecast-deviation")
 async def city_forecast_deviation(
-    model: Annotated[str, Query(pattern="^(tomorrow|ecmwf)$")] = "tomorrow",
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
-    value_col = "tomorrow_max" if model == "tomorrow" else "ecmwf_max"
-    return await analytics_repo.get_city_forecast_deviation_summary(session, value_col)
+    return await analytics_repo.get_city_forecast_deviation_summary(session)
 
 
 @router.get("/top-bucket-calibration")

@@ -102,42 +102,86 @@ async def get_pipeline_health(session: AsyncSession) -> dict:
 
 
 async def get_city_forecast_deviation_summary(
-    session: AsyncSession, value_col: str
+    session: AsyncSession,
 ) -> list[dict]:
     """
-    Per-city deviation summary against Polymarket implied temperature.
-    Returns min/avg/max and p50/p90 of absolute deviation across snapshots.
+    Per-city deviation summary against resolved PM bucket center.
+    Returns mean deviation, mean min, and mean max of deviation across markets for both tomorrow and ecmwf.
     """
-    if value_col not in {"tomorrow_max", "ecmwf_max"}:
-        raise ValueError(f"Invalid value_col: {value_col!r}")
-
-    col = getattr(MarketSnapshot, value_col)
-    abs_dev = func.abs(col - MarketSnapshot.poly_implied)
+    from app.services.analytics import parse_bucket_bounds, _bucket_center_from_bounds
+    from collections import defaultdict
+    import math
 
     q = (
         select(
-            City.city_slug.label("city_slug"),
-            func.count().label("samples_count"),
-            func.min(abs_dev).label("min_abs_dev"),
-            func.avg(abs_dev).label("mean_abs_dev"),
-            func.max(abs_dev).label("max_abs_dev"),
-            func.percentile_cont(0.5).within_group(abs_dev).label("p50_abs_dev"),
-            func.percentile_cont(0.9).within_group(abs_dev).label("p90_abs_dev"),
+            City.city_slug,
+            Market.id.label("market_id"),
+            Market.pm_winning_label,
+            MarketSnapshot.tomorrow_max,
+            MarketSnapshot.ecmwf_max,
         )
         .join(Market, MarketSnapshot.market_id == Market.id)
         .join(City, Market.city_id == City.id)
-        .where(col.isnot(None), MarketSnapshot.poly_implied.isnot(None))
-        .group_by(City.city_slug)
-        .order_by(City.city_slug)
+        .where(
+            Market.status == "pm_resolved",
+            Market.pm_winning_label.isnot(None)
+        )
     )
     result = await session.execute(q)
-    rows = [dict(r._mapping) for r in result.all()]
+    rows = result.all()
+
+    # group by city -> market
+    from collections import defaultdict
+    data = defaultdict(lambda: defaultdict(list))
+    
+    # Pre-parse resolve centers
+    market_resolve_centers = {}
     for r in rows:
-        # Normalize Decimals from aggregates for frontend.
-        for k in ("min_abs_dev", "mean_abs_dev", "max_abs_dev", "p50_abs_dev", "p90_abs_dev"):
-            if r.get(k) is not None:
-                r[k] = float(r[k])
-    return rows
+        m_id = r.market_id
+        if m_id not in market_resolve_centers:
+            label = r.pm_winning_label
+            lo, hi = parse_bucket_bounds(label)
+            market_resolve_centers[m_id] = _bucket_center_from_bounds(lo, hi)
+        
+        c = market_resolve_centers[m_id]
+        t = r.tomorrow_max
+        e = r.ecmwf_max
+        
+        if t is not None:
+            data[r.city_slug][m_id].setdefault("t_devs", []).append(float(t) - c)
+        if e is not None:
+            data[r.city_slug][m_id].setdefault("e_devs", []).append(float(e) - c)
+
+    out = []
+    for city, markets in data.items():
+        t_means, t_mins, t_maxs = [], [], []
+        e_means, e_mins, e_maxs = [], [], []
+        for m_id, m_data in markets.items():
+            if "t_devs" in m_data and m_data["t_devs"]:
+                t_means.append(sum(m_data["t_devs"]) / len(m_data["t_devs"]))
+                t_mins.append(min(m_data["t_devs"]))
+                t_maxs.append(max(m_data["t_devs"]))
+            if "e_devs" in m_data and m_data["e_devs"]:
+                e_means.append(sum(m_data["e_devs"]) / len(m_data["e_devs"]))
+                e_mins.append(min(m_data["e_devs"]))
+                e_maxs.append(max(m_data["e_devs"]))
+                
+        if not t_means and not e_means:
+            continue
+            
+        out.append({
+            "city_slug": city,
+            "tomorrow_mean": sum(t_means) / len(t_means) if t_means else None,
+            "tomorrow_mean_min": sum(t_mins) / len(t_mins) if t_mins else None,
+            "tomorrow_mean_max": sum(t_maxs) / len(t_maxs) if t_maxs else None,
+            "ecmwf_mean": sum(e_means) / len(e_means) if e_means else None,
+            "ecmwf_mean_min": sum(e_mins) / len(e_mins) if e_mins else None,
+            "ecmwf_mean_max": sum(e_maxs) / len(e_maxs) if e_maxs else None,
+            "samples_count": len(markets),
+        })
+        
+    out.sort(key=lambda x: x["city_slug"])
+    return out
 
 
 async def get_top_bucket_calibration(
