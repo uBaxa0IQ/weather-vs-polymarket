@@ -304,8 +304,8 @@ function PipelineControl({ health }) {
           <div className="stat-value green">{health?.active_markets ?? "—"}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Snaps 24 h</div>
-          <div className="stat-value">{health?.snapshots_24h ?? "—"}</div>
+          <div className="stat-label">Resolved</div>
+          <div className="stat-value">{health?.resolved_markets ?? "—"}</div>
         </div>
       </div>
 
