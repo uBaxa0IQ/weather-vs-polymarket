@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Bar,
+  BarChart,
   Cell,
   CartesianGrid,
   Legend,
@@ -454,8 +456,55 @@ function TopBucketHitVsTimeChart({ data }) {
   );
 }
 
+function CityDeviationBarTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0].payload;
+  const fmt = (v) => (typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(2)}°` : "—");
+  const sortedPayload = [...payload].sort((a, b) => {
+    const av = typeof a?.value === "number" ? a.value : Number.NEGATIVE_INFINITY;
+    const bv = typeof b?.value === "number" ? b.value : Number.NEGATIVE_INFINITY;
+    return bv - av;
+  });
+  const title = String(row.city_slug ?? "").replace(/-/g, " ");
+  return (
+    <div className="chart-tooltip">
+      <div className="chart-tooltip-label">{title}</div>
+      {row.samples_count != null && (
+        <div className="chart-tooltip-label" style={{ color: "var(--text-2)", fontWeight: 500 }}>
+          {row.samples_count} snapshots
+        </div>
+      )}
+      {sortedPayload.map((entry) => (
+        <div key={entry.dataKey} className="chart-tooltip-row">
+          <span className="chart-tooltip-dot" style={{ background: entry.color }} />
+          <span style={{ color: "var(--text-2)" }}>{entry.name}</span>
+          <strong style={{ color: "var(--text-1)", marginLeft: "auto", paddingLeft: 12 }}>
+            {fmt(entry.value)}
+          </strong>
+        </div>
+      ))}
+      <div
+        style={{
+          marginTop: 8,
+          paddingTop: 8,
+          borderTop: "1px solid var(--border-subtle)",
+          fontSize: 11,
+          color: "var(--text-2)",
+          lineHeight: 1.45,
+        }}
+      >
+        Range: min {fmt(row.min_abs_dev)} · max {fmt(row.max_abs_dev)}
+      </div>
+    </div>
+  );
+}
+
 function CityForecastDeviationChart({ data }) {
-  if (!data?.length) {
+  const sorted = useMemo(
+    () => [...(data ?? [])].sort((a, b) => (b.p50_abs_dev ?? 0) - (a.p50_abs_dev ?? 0)),
+    [data],
+  );
+  if (!sorted.length) {
     return (
       <div className="empty-state" style={{ height: 220 }}>
         <p>No snapshot deviation data yet.</p>
@@ -466,38 +515,50 @@ function CityForecastDeviationChart({ data }) {
     <div className="card">
       <div className="card-header">
         <span className="card-title">City forecast deviation vs Poly implied</span>
-        <span className="card-subtitle">min / avg / p90 / max by city</span>
+        <span className="card-subtitle">Grouped bars per city · sorted by median |Δ| · tooltip shows full spread</span>
       </div>
-      <div className="card-body chart-wrap">
+      <div className="card-body chart-wrap" style={{ height: 300 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 40, left: -10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+          <BarChart
+            data={sorted}
+            margin={{ top: 8, right: 10, bottom: 52, left: 4 }}
+            barCategoryGap="14%"
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} vertical={false} />
             <XAxis
               dataKey="city_slug"
               {...axisProps("bottom")}
               interval={0}
-              angle={-35}
+              tickFormatter={(slug) => String(slug).replace(/-/g, " ")}
+              angle={-38}
               textAnchor="end"
-              height={60}
+              height={68}
             />
-            <YAxis {...axisProps()} tickFormatter={(v) => `${v.toFixed(1)}°`} />
-            <Tooltip
-              content={(
-                <ChartTooltip
-                  labelFormatter={(v) => String(v)}
-                  valueFormatter={(v) => (typeof v === "number" ? `${v.toFixed(2)}°` : "—")}
-                  metaFormatter={(row) => (
-                    row?.samples_count != null ? `${row.samples_count} snapshots` : null
-                  )}
-                />
-              )}
+            <YAxis {...axisProps()} tickFormatter={(v) => `${v}°`} width={36} />
+            <Tooltip content={<CityDeviationBarTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} iconType="square" />
+            <Bar
+              dataKey="p50_abs_dev"
+              name="Median |Δ|"
+              fill={CHART_THEME.tomorrow}
+              maxBarSize={22}
+              radius={[3, 3, 0, 0]}
             />
-            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-            <Line type="monotone" dataKey="min_abs_dev" stroke="#7ee787" dot={false} name="Min" strokeWidth={1.6} />
-            <Line type="monotone" dataKey="mean_abs_dev" stroke={CHART_THEME.tomorrow} dot={false} name="Average" strokeWidth={2.2} />
-            <Line type="monotone" dataKey="p90_abs_dev" stroke={CHART_THEME.topBucketValue} dot={false} name="P90" strokeWidth={1.8} />
-            <Line type="monotone" dataKey="max_abs_dev" stroke="#ff7b72" dot={false} name="Max" strokeWidth={1.6} />
-          </LineChart>
+            <Bar
+              dataKey="mean_abs_dev"
+              name="Mean |Δ|"
+              fill={CHART_THEME.poly}
+              maxBarSize={22}
+              radius={[3, 3, 0, 0]}
+            />
+            <Bar
+              dataKey="p90_abs_dev"
+              name="P90 |Δ|"
+              fill={CHART_THEME.topBucketValue}
+              maxBarSize={22}
+              radius={[3, 3, 0, 0]}
+            />
+          </BarChart>
         </ResponsiveContainer>
       </div>
     </div>
