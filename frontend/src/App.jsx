@@ -370,24 +370,49 @@ function StrategyCurves({ data }) {
   }
 
   const charts = [
-    { title: "Main bucket hit probability", k1: "tomorrow_main", k2: "ecmwf_main", solo: false },
-    { title: "Main ±1 bucket hit probability", k1: "tomorrow_main_plus_1", k2: "ecmwf_main_plus_1", solo: false },
-    { title: "Main ±2 buckets hit probability", k1: "tomorrow_main_plus_2", k2: "ecmwf_main_plus_2", solo: false },
+    {
+      title: "Main bucket hit probability",
+      k1: "tomorrow_main",
+      k2: "ecmwf_main",
+      poly1: "tomorrow_main_poly_mass",
+      poly2: "ecmwf_main_poly_mass",
+      solo: false,
+    },
+    {
+      title: "Main ±1 bucket hit probability",
+      k1: "tomorrow_main_plus_1",
+      k2: "ecmwf_main_plus_1",
+      poly1: "tomorrow_main_plus_1_poly_mass",
+      poly2: "ecmwf_main_plus_1_poly_mass",
+      solo: false,
+    },
+    {
+      title: "Main ±2 buckets hit probability",
+      k1: "tomorrow_main_plus_2",
+      k2: "ecmwf_main_plus_2",
+      poly1: "tomorrow_main_plus_2_poly_mass",
+      poly2: "ecmwf_main_plus_2_poly_mass",
+      solo: false,
+    },
     {
       title: "Polymarket top-1 vs final bucket",
       k1: "poly_main",
       k2: null,
+      poly1: null,
+      poly2: null,
       solo: true,
     },
   ];
 
   return (
     <div className="charts-grid">
-      {charts.map(({ title, k1, k2, solo }) => (
+      {charts.map(({ title, k1, k2, poly1, poly2, solo }) => (
         <div key={title} className="card">
           <div className="card-header">
             <span className="card-title">{title}</span>
-            <span className="card-subtitle">{data.length} buckets</span>
+            <span className="card-subtitle">
+              {solo ? `${data.length} buckets` : `${data.length} buckets · dashed = mean Σ Poly price on model buckets`}
+            </span>
           </div>
           <div className="card-body chart-wrap">
             <ResponsiveContainer width="100%" height="100%">
@@ -409,6 +434,30 @@ function StrategyCurves({ data }) {
                 <Line type="monotone" dataKey={k1} stroke={solo ? CHART_THEME.poly : CHART_THEME.tomorrow} dot={false} name={solo ? "Poly top-1" : "Tomorrow"} strokeWidth={2} />
                 {!solo && k2 && (
                   <Line type="monotone" dataKey={k2} stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
+                )}
+                {!solo && poly1 && (
+                  <Line
+                    type="monotone"
+                    dataKey={poly1}
+                    stroke={CHART_THEME.tomorrow}
+                    dot={false}
+                    name="Tomorrow Σp"
+                    strokeWidth={1.6}
+                    strokeDasharray="6 4"
+                    strokeOpacity={0.85}
+                  />
+                )}
+                {!solo && poly2 && (
+                  <Line
+                    type="monotone"
+                    dataKey={poly2}
+                    stroke={CHART_THEME.ecmwf}
+                    dot={false}
+                    name="ECMWF Σp"
+                    strokeWidth={1.6}
+                    strokeDasharray="6 4"
+                    strokeOpacity={0.85}
+                  />
                 )}
               </LineChart>
             </ResponsiveContainer>

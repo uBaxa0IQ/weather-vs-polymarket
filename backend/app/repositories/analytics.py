@@ -53,6 +53,7 @@ async def get_strategy_curve_rows(session: AsyncSession) -> list[dict]:
             MarketSnapshot.captured_at_utc,
             MarketSnapshot.time_to_resolve_hours,
             MarketSnapshot.bucket_labels_json,
+            MarketSnapshot.bucket_prices_json,
             MarketSnapshot.top_bucket_index,
             Market.pm_winning_bucket_index,
             MarketSnapshot.tomorrow_max,

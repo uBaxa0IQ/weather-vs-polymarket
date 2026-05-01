@@ -123,13 +123,47 @@ def _hit_any(pred_indices: list[int], final_idx: int) -> int:
     return int(final_idx in pred_indices)
 
 
+def _normalized_bucket_probs(bucket_prices_json: Any) -> list[float] | None:
+    if not isinstance(bucket_prices_json, list) or not bucket_prices_json:
+        return None
+    vals: list[float] = []
+    for p in bucket_prices_json:
+        try:
+            vals.append(float(p))
+        except (TypeError, ValueError):
+            vals.append(0.0)
+    total = sum(vals)
+    if total <= 0:
+        return None
+    return [v / total for v in vals]
+
+
+def _poly_mass_on_indices(norm_probs: list[float], indices: list[int]) -> float | None:
+    if not indices:
+        return None
+    seen: set[int] = set()
+    mass = 0.0
+    for i in indices:
+        if i in seen:
+            continue
+        seen.add(i)
+        if 0 <= i < len(norm_probs):
+            mass += norm_probs[i]
+    return mass
+
+
+def _mean_optional(vals: list[float | None]) -> float | None:
+    xs = [x for x in vals if x is not None]
+    return sum(xs) / len(xs) if xs else None
+
+
 def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Rows must contain market_id, captured_at_utc, time_to_resolve_hours, bucket_labels_json, top_bucket_index, pm_winning_bucket_index, tomorrow_max, ecmwf_max."""
+    """Rows must contain market_id, captured_at_utc, time_to_resolve_hours, bucket_labels_json, bucket_prices_json, top_bucket_index, pm_winning_bucket_index, tomorrow_max, ecmwf_max."""
     by_market: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_market[row["market_id"]].append(row)
 
-    agg: dict[int, dict[str, list[int]]] = defaultdict(
+    agg: dict[int, dict[str, list[Any]]] = defaultdict(
         lambda: {
             "tomorrow_main": [],
             "ecmwf_main": [],
@@ -138,6 +172,12 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "ecmwf_main_plus_1": [],
             "tomorrow_main_plus_2": [],
             "ecmwf_main_plus_2": [],
+            "tomorrow_main_poly_mass": [],
+            "ecmwf_main_poly_mass": [],
+            "tomorrow_main_plus_1_poly_mass": [],
+            "ecmwf_main_plus_1_poly_mass": [],
+            "tomorrow_main_plus_2_poly_mass": [],
+            "ecmwf_main_plus_2_poly_mass": [],
         }
     )
 
@@ -184,6 +224,48 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             agg[t_bucket]["tomorrow_main_plus_2"].append(_hit_any(tomorrow_main_plus_2_idxs, final_idx))
             agg[t_bucket]["ecmwf_main_plus_2"].append(_hit_any(ecmwf_main_plus_2_idxs, final_idx))
 
+            norm_probs = _normalized_bucket_probs(snap.get("bucket_prices_json"))
+            if norm_probs is not None:
+                if tomorrow_pred is not None:
+                    agg[t_bucket]["tomorrow_main_poly_mass"].append(
+                        _poly_mass_on_indices(norm_probs, [tomorrow_pred])
+                    )
+                else:
+                    agg[t_bucket]["tomorrow_main_poly_mass"].append(None)
+                if ecmwf_pred is not None:
+                    agg[t_bucket]["ecmwf_main_poly_mass"].append(
+                        _poly_mass_on_indices(norm_probs, [ecmwf_pred])
+                    )
+                else:
+                    agg[t_bucket]["ecmwf_main_poly_mass"].append(None)
+                agg[t_bucket]["tomorrow_main_plus_1_poly_mass"].append(
+                    _poly_mass_on_indices(norm_probs, tomorrow_main_plus_1_idxs)
+                    if tomorrow_main_plus_1_idxs
+                    else None
+                )
+                agg[t_bucket]["ecmwf_main_plus_1_poly_mass"].append(
+                    _poly_mass_on_indices(norm_probs, ecmwf_main_plus_1_idxs)
+                    if ecmwf_main_plus_1_idxs
+                    else None
+                )
+                agg[t_bucket]["tomorrow_main_plus_2_poly_mass"].append(
+                    _poly_mass_on_indices(norm_probs, tomorrow_main_plus_2_idxs)
+                    if tomorrow_main_plus_2_idxs
+                    else None
+                )
+                agg[t_bucket]["ecmwf_main_plus_2_poly_mass"].append(
+                    _poly_mass_on_indices(norm_probs, ecmwf_main_plus_2_idxs)
+                    if ecmwf_main_plus_2_idxs
+                    else None
+                )
+            else:
+                agg[t_bucket]["tomorrow_main_poly_mass"].append(None)
+                agg[t_bucket]["ecmwf_main_poly_mass"].append(None)
+                agg[t_bucket]["tomorrow_main_plus_1_poly_mass"].append(None)
+                agg[t_bucket]["ecmwf_main_plus_1_poly_mass"].append(None)
+                agg[t_bucket]["tomorrow_main_plus_2_poly_mass"].append(None)
+                agg[t_bucket]["ecmwf_main_plus_2_poly_mass"].append(None)
+
     out: list[dict[str, Any]] = []
     for bucket_h in sorted(agg.keys(), reverse=True):
         m = agg[bucket_h]
@@ -214,6 +296,12 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     if m["ecmwf_main_plus_2"]
                     else None
                 ),
+                "tomorrow_main_poly_mass": _mean_optional(m["tomorrow_main_poly_mass"]),
+                "ecmwf_main_poly_mass": _mean_optional(m["ecmwf_main_poly_mass"]),
+                "tomorrow_main_plus_1_poly_mass": _mean_optional(m["tomorrow_main_plus_1_poly_mass"]),
+                "ecmwf_main_plus_1_poly_mass": _mean_optional(m["ecmwf_main_plus_1_poly_mass"]),
+                "tomorrow_main_plus_2_poly_mass": _mean_optional(m["tomorrow_main_plus_2_poly_mass"]),
+                "ecmwf_main_plus_2_poly_mass": _mean_optional(m["ecmwf_main_plus_2_poly_mass"]),
             }
         )
     return out
