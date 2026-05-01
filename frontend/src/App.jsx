@@ -502,7 +502,20 @@ function CityForecastDeviationChart({ data }) {
               height={68}
             />
             <YAxis {...axisProps()} tickFormatter={(v) => `${v > 0 ? "+" : ""}${v}°`} width={44} />
-            <ReferenceLine y={0} stroke="var(--border-subtle, #30363d)" strokeDasharray="3 3" />
+            <ReferenceLine
+              y={0}
+              stroke="#d29922"
+              strokeDasharray="8 6"
+              strokeWidth={2}
+              strokeOpacity={0.95}
+              label={{
+                value: "0° — no deviation",
+                position: "insideTopRight",
+                fill: "#d29922",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+            />
             <Tooltip content={<CityDeviationBarTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
             <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} iconType="circle" />
             
