@@ -538,13 +538,13 @@ function CityForecastDeviationChart({ data }) {
   );
 }
 
-function TopBucketCalibrationChart({ data, binPct, onChangeBinPct }) {
+function AllBucketsCalibrationChart({ data, binPct, onChangeBinPct }) {
   const bins = data?.bins || [];
   if (!bins.length) {
     return (
       <div className="card">
         <div className="card-header">
-          <span className="card-title">Top-1 probability calibration</span>
+          <span className="card-title">All-buckets probability calibration</span>
           <span className="card-subtitle">bin: {binPct}%</span>
         </div>
         <div className="empty-state" style={{ height: 180 }}>
@@ -557,7 +557,7 @@ function TopBucketCalibrationChart({ data, binPct, onChangeBinPct }) {
     <div className="card">
       <div className="card-header" style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
         <div>
-          <span className="card-title">Top-1 probability calibration</span>
+          <span className="card-title">All-buckets probability calibration</span>
           <span className="card-subtitle">{`samples: ${data.total_samples} · ECE ${((data.ece ?? 0) * 100).toFixed(2)}% · Brier ${(data.brier ?? 0).toFixed(4)}`}</span>
         </div>
         <div className="btn-row">
@@ -984,7 +984,7 @@ export function App() {
   const [strategyCurves, setStrategyCurves] = useState([]);
   const [cityDeviation, setCityDeviation] = useState([]);
   const [calibrationBinPct, setCalibrationBinPct] = useState(() => Number(loadStored("calibrationBinPct", 5)) === 1 ? 1 : 5);
-  const [topBucketCalibration, setTopBucketCalibration] = useState(null);
+  const [bucketCalibration, setBucketCalibration] = useState(null);
   const [topBucketProbVsTime, setTopBucketProbVsTime] = useState([]);
   const [view, setView] = useState(() => loadStored("view", "markets"));
   const [selectedSlug, setSelectedSlug] = useState(() => loadStored("selectedSlug", ""));
@@ -1005,9 +1005,9 @@ export function App() {
       .catch(console.error);
   }, []);
 
-  const fetchTopBucketCalibration = useCallback((binPct) => {
-    apiFetch(`/analytics/top-bucket-calibration?bin_pct=${binPct}`)
-      .then(setTopBucketCalibration)
+  const fetchBucketCalibration = useCallback((binPct) => {
+    apiFetch(`/analytics/bucket-calibration?bin_pct=${binPct}`)
+      .then(setBucketCalibration)
       .catch(console.error);
   }, []);
 
@@ -1037,7 +1037,7 @@ export function App() {
     fetchMarkets();
     fetchStrategyCurves();
     fetchCityDeviation();
-    fetchTopBucketCalibration(calibrationBinPct);
+    fetchBucketCalibration(calibrationBinPct);
     fetchTopBucketProbVsTime();
   }, []);
 
@@ -1048,10 +1048,10 @@ export function App() {
     if (view === "dashboard") {
       fetchStrategyCurves();
       fetchCityDeviation();
-      fetchTopBucketCalibration(calibrationBinPct);
+      fetchBucketCalibration(calibrationBinPct);
       fetchTopBucketProbVsTime();
     }
-  }, [view, fetchStrategyCurves, fetchCityDeviation, fetchTopBucketCalibration, calibrationBinPct, fetchTopBucketProbVsTime]);
+  }, [view, fetchStrategyCurves, fetchCityDeviation, fetchBucketCalibration, calibrationBinPct, fetchTopBucketProbVsTime]);
 
   // Poll health every 30 s
   useInterval(fetchHealth, 30_000);
@@ -1187,8 +1187,8 @@ export function App() {
                 <CityForecastDeviationChart data={cityDeviation} />
               </div>
               <div style={{ marginTop: 12 }}>
-                <TopBucketCalibrationChart
-                  data={topBucketCalibration}
+                <AllBucketsCalibrationChart
+                  data={bucketCalibration}
                   binPct={calibrationBinPct}
                   onChangeBinPct={setCalibrationBinPct}
                 />

@@ -132,7 +132,7 @@ async def get_city_forecast_deviation_summary(
 
     # group by city -> market
     from collections import defaultdict
-    data = defaultdict(lambda: defaultdict(list))
+    data = defaultdict(lambda: defaultdict(dict))
     
     # Pre-parse resolve centers
     market_resolve_centers = {}
@@ -184,30 +184,27 @@ async def get_city_forecast_deviation_summary(
     return out
 
 
-async def get_top_bucket_calibration(
+async def get_all_buckets_calibration(
     session: AsyncSession, bin_pct: int
 ) -> dict:
     if bin_pct not in (1, 5):
         raise ValueError(f"Invalid bin_pct: {bin_pct!r}")
 
-    hit_expr = case((MarketSnapshot.top_bucket_index == Market.pm_winning_bucket_index, 1.0), else_=0.0)
     q = (
         select(
-            MarketSnapshot.top_bucket_prob.label("pred"),
-            hit_expr.label("hit"),
+            Market.pm_winning_bucket_index,
+            MarketSnapshot.bucket_prices_json,
         )
         .join(Market)
         .where(
             Market.status.in_(("nominally_resolved", "pm_resolved")),
             Market.pm_winning_bucket_index.isnot(None),
-            MarketSnapshot.top_bucket_index.isnot(None),
-            MarketSnapshot.top_bucket_prob.isnot(None),
-            MarketSnapshot.top_bucket_prob >= 0,
-            MarketSnapshot.top_bucket_prob <= 1,
+            MarketSnapshot.bucket_prices_json.isnot(None),
         )
     )
     result = await session.execute(q)
     rows = result.all()
+
     if not rows:
         return {"bin_pct": bin_pct, "total_samples": 0, "ece": None, "brier": None, "bins": []}
 
@@ -227,18 +224,33 @@ async def get_top_bucket_calibration(
     ]
     ece_weighted_sum = 0.0
     brier_sum = 0.0
-    total = len(rows)
+    total = 0
     pred_sums = [0.0 for _ in range(nbins)]
     hit_sums = [0.0 for _ in range(nbins)]
 
-    for pred_raw, hit_raw in rows:
-        pred = float(pred_raw)
-        hit = float(hit_raw)
-        idx = min(int(pred / step), nbins - 1)
-        bins[idx]["samples_count"] += 1
-        pred_sums[idx] += pred
-        hit_sums[idx] += hit
-        brier_sum += (pred - hit) ** 2
+    for r in rows:
+        winning_idx = r.pm_winning_bucket_index
+        prices_json = r.bucket_prices_json
+        if not isinstance(prices_json, list):
+            continue
+        for idx, price in enumerate(prices_json):
+            try:
+                pred = float(price)
+            except (ValueError, TypeError):
+                continue
+            if pred < 0 or pred > 1:
+                continue
+            hit = 1.0 if idx == winning_idx else 0.0
+            
+            bin_idx = min(int(pred / step), nbins - 1)
+            bins[bin_idx]["samples_count"] += 1
+            pred_sums[bin_idx] += pred
+            hit_sums[bin_idx] += hit
+            brier_sum += (pred - hit) ** 2
+            total += 1
+
+    if total == 0:
+        return {"bin_pct": bin_pct, "total_samples": 0, "ece": None, "brier": None, "bins": []}
 
     for i in range(nbins):
         n = bins[i]["samples_count"]
@@ -254,7 +266,7 @@ async def get_top_bucket_calibration(
         "bin_pct": bin_pct,
         "total_samples": total,
         "ece": round(ece_weighted_sum, 6),
-        "brier": round(brier_sum / total, 6) if total > 0 else None,
+        "brier": round(brier_sum / total, 6),
         "bins": bins,
     }
 

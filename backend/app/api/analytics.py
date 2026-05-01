@@ -41,8 +41,8 @@ async def city_forecast_deviation(
     return await analytics_repo.get_city_forecast_deviation_summary(session)
 
 
-@router.get("/top-bucket-calibration")
-async def top_bucket_calibration(
+@router.get("/bucket-calibration")
+async def bucket_calibration(
     bin_pct: Annotated[int, Query(description="Histogram bin width in percent; allowed values: 1 or 5")] = 5,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -51,7 +51,7 @@ async def top_bucket_calibration(
             status_code=422,
             detail="bin_pct must be 1 or 5",
         )
-    return await analytics_repo.get_top_bucket_calibration(session, bin_pct)
+    return await analytics_repo.get_all_buckets_calibration(session, bin_pct)
 
 
 @router.get("/top-bucket-probability-vs-time")
