@@ -410,9 +410,7 @@ function StrategyCurves({ data }) {
         <div key={title} className="card">
           <div className="card-header">
             <span className="card-title">{title}</span>
-            <span className="card-subtitle">
-              {solo ? `${data.length} buckets` : `${data.length} buckets · dashed = mean Σ Poly price on model buckets`}
-            </span>
+            <span className="card-subtitle">{`${data.length} buckets`}</span>
           </div>
           <div className="card-body chart-wrap">
             <ResponsiveContainer width="100%" height="100%">
@@ -467,8 +465,6 @@ function StrategyCurves({ data }) {
     </div>
   );
 }
-
-// TopBucketHitVsTimeChart removed and replaced by TopBucketProbabilityVsTimeChart
 
 function CityDeviationBarTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
@@ -531,7 +527,7 @@ function CityForecastDeviationChart({ data }) {
     <div className="card">
       <div className="card-header">
         <span className="card-title">City forecast deviation from actual</span>
-        <span className="card-subtitle">Dot shows mean deviation across markets. Whiskers show mean minimum and maximum.</span>
+        <span className="card-subtitle">{`${formattedData.length} cities`}</span>
       </div>
       <div className="card-body chart-wrap" style={{ height: 340 }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -557,13 +553,6 @@ function CityForecastDeviationChart({ data }) {
               strokeDasharray="8 6"
               strokeWidth={2}
               strokeOpacity={0.95}
-              label={{
-                value: "0° — no deviation",
-                position: "insideTopRight",
-                fill: "#d29922",
-                fontSize: 11,
-                fontWeight: 600,
-              }}
             />
             <Tooltip content={<CityDeviationBarTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
             <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} iconType="circle" />
