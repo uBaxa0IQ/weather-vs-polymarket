@@ -4,6 +4,7 @@ import {
   BarChart,
   Cell,
   CartesianGrid,
+  ErrorBar,
   Legend,
   Line,
   LineChart,
@@ -446,28 +447,11 @@ function CityDeviationBarTooltip({ active, payload }) {
   );
 }
 
-const CustomErrorBarShape = (props) => {
-  const { x, y, width, height, value, fill, payload, dataKey } = props;
-  if (!value || value.length !== 2) return null;
-  
-  const min = value[0];
-  const max = value[1];
-  const isTomorrow = dataKey === "tomorrow_range";
-  const mean = isTomorrow ? payload.tomorrow_mean : payload.ecmwf_mean;
-  
-  const range = max - min;
-  const meanPct = range === 0 ? 0.5 : (max - mean) / range;
-  const meanY = y + height * meanPct;
+const CustomDotBar = (props) => {
+  const { x, y, width, fill, value } = props;
+  if (value == null) return null;
   const centerX = x + width / 2;
-
-  return (
-    <g>
-      <line x1={centerX} y1={y} x2={centerX} y2={y + height} stroke={fill} strokeWidth={2} opacity={0.7} />
-      <line x1={centerX - 4} y1={y} x2={centerX + 4} y2={y} stroke={fill} strokeWidth={2} opacity={0.7} />
-      <line x1={centerX - 4} y1={y + height} x2={centerX + 4} y2={y + height} stroke={fill} strokeWidth={2} opacity={0.7} />
-      <circle cx={centerX} cy={meanY} r={4} fill={fill} />
-    </g>
-  );
+  return <circle cx={centerX} cy={y} r={4} fill={fill} />;
 };
 
 function CityForecastDeviationChart({ data }) {
@@ -478,8 +462,12 @@ function CityForecastDeviationChart({ data }) {
   const formattedData = useMemo(() => {
     return sorted.map((d) => ({
       ...d,
-      tomorrow_range: [d.tomorrow_mean_min ?? 0, d.tomorrow_mean_max ?? 0],
-      ecmwf_range: [d.ecmwf_mean_min ?? 0, d.ecmwf_mean_max ?? 0],
+      tomorrow_error: d.tomorrow_mean != null && d.tomorrow_mean_min != null && d.tomorrow_mean_max != null
+        ? [d.tomorrow_mean - d.tomorrow_mean_min, d.tomorrow_mean_max - d.tomorrow_mean]
+        : [0, 0],
+      ecmwf_error: d.ecmwf_mean != null && d.ecmwf_mean_min != null && d.ecmwf_mean_max != null
+        ? [d.ecmwf_mean - d.ecmwf_mean_min, d.ecmwf_mean_max - d.ecmwf_mean]
+        : [0, 0],
     }));
   }, [sorted]);
 
@@ -501,7 +489,7 @@ function CityForecastDeviationChart({ data }) {
           <BarChart
             data={formattedData}
             margin={{ top: 12, right: 10, bottom: 52, left: 4 }}
-            barCategoryGap="16%"
+            barCategoryGap="20%"
           >
             <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} vertical={false} />
             <XAxis
@@ -517,20 +505,26 @@ function CityForecastDeviationChart({ data }) {
             <ReferenceLine y={0} stroke="var(--border-subtle, #30363d)" strokeDasharray="3 3" />
             <Tooltip content={<CityDeviationBarTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
             <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} iconType="circle" />
+            
             <Bar
-              dataKey="tomorrow_range"
+              dataKey="tomorrow_mean"
               name="Tomorrow"
               fill={CHART_THEME.tomorrow}
-              maxBarSize={16}
-              shape={<CustomErrorBarShape />}
-            />
+              maxBarSize={12}
+              shape={<CustomDotBar />}
+            >
+              <ErrorBar dataKey="tomorrow_error" width={4} strokeWidth={2} stroke={CHART_THEME.tomorrow} opacity={0.8} />
+            </Bar>
+            
             <Bar
-              dataKey="ecmwf_range"
+              dataKey="ecmwf_mean"
               name="ECMWF"
               fill={CHART_THEME.ecmwf}
-              maxBarSize={16}
-              shape={<CustomErrorBarShape />}
-            />
+              maxBarSize={12}
+              shape={<CustomDotBar />}
+            >
+              <ErrorBar dataKey="ecmwf_error" width={4} strokeWidth={2} stroke={CHART_THEME.ecmwf} opacity={0.8} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
