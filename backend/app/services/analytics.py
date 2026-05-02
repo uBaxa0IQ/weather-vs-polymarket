@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from math import inf
 from typing import Any
+
+# Max Polymarket rank (1 = highest price) accepted by strategy-curves API.
+_MAX_POLY_RANK = 8
 
 
 def parse_bucket_bounds(label: str) -> tuple[float, float]:
@@ -157,8 +161,46 @@ def _mean_optional(vals: list[float | None]) -> float | None:
     return sum(xs) / len(xs) if xs else None
 
 
-def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def clamp_poly_rank(poly_rank: int) -> int:
+    return max(1, min(int(poly_rank), _MAX_POLY_RANK))
+
+
+def _poly_rank_k_index_price(
+    bucket_prices_json: Any, labels_len: int, k: int
+) -> tuple[int | None, float | None]:
+    """
+    k is 1-based (1 = favorite by price). Sort buckets by descending price;
+    ties broken by higher bucket index (stable).
+    """
+    if k < 1 or labels_len <= 0:
+        return None, None
+    if not isinstance(bucket_prices_json, list):
+        return None, None
+    pairs: list[tuple[int, float]] = []
+    for i in range(min(len(bucket_prices_json), labels_len)):
+        try:
+            raw = float(bucket_prices_json[i])
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(raw):
+            continue
+        p = min(max(raw, 0.0), 1.0)
+        if p <= 0:
+            continue
+        pairs.append((i, p))
+    if not pairs or k > len(pairs):
+        return None, None
+    pairs.sort(key=lambda t: (-t[1], -t[0]))
+    idx, price = pairs[k - 1]
+    return idx, price
+
+
+def build_strategy_curves(
+    rows: list[dict[str, Any]],
+    poly_rank: int = 1,
+) -> list[dict[str, Any]]:
     """Rows must contain market_id, captured_at_utc, time_to_resolve_hours, bucket_labels_json, bucket_prices_json, top_bucket_index, pm_winning_bucket_index, tomorrow_max, ecmwf_max."""
+    k = clamp_poly_rank(poly_rank)
     by_market: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_market[row["market_id"]].append(row)
@@ -178,6 +220,8 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "ecmwf_main_plus_1_poly_mass": [],
             "tomorrow_main_plus_2_poly_mass": [],
             "ecmwf_main_plus_2_poly_mass": [],
+            "poly_rank_hit": [],
+            "poly_rank_mean_price": [],
         }
     )
 
@@ -216,9 +260,12 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             tomorrow_main_plus_2_idxs = _pred_plus_up_down(tomorrow_pred, len(labels))
             ecmwf_main_plus_2_idxs = _pred_plus_up_down(ecmwf_pred, len(labels))
             poly_pred = int(snap["top_bucket_index"]) if snap.get("top_bucket_index") is not None else None
+            rk_idx, rk_price = _poly_rank_k_index_price(snap.get("bucket_prices_json"), len(labels), k)
             agg[t_bucket]["tomorrow_main"].append(_hit(tomorrow_pred, final_idx, 0))
             agg[t_bucket]["ecmwf_main"].append(_hit(ecmwf_pred, final_idx, 0))
             agg[t_bucket]["poly_main"].append(_hit(poly_pred, final_idx, 0))
+            agg[t_bucket]["poly_rank_hit"].append(_hit(rk_idx, final_idx, 0))
+            agg[t_bucket]["poly_rank_mean_price"].append(rk_price)
             agg[t_bucket]["tomorrow_main_plus_1"].append(_hit_any(tomorrow_main_plus_1_idxs, final_idx))
             agg[t_bucket]["ecmwf_main_plus_1"].append(_hit_any(ecmwf_main_plus_1_idxs, final_idx))
             agg[t_bucket]["tomorrow_main_plus_2"].append(_hit_any(tomorrow_main_plus_2_idxs, final_idx))
@@ -272,10 +319,15 @@ def build_strategy_curves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         out.append(
             {
                 "hours_to_resolve": bucket_h,
+                "poly_rank": k,
                 "samples_count": len(m["tomorrow_main"]),
                 "tomorrow_main": sum(m["tomorrow_main"]) / len(m["tomorrow_main"]) if m["tomorrow_main"] else None,
                 "ecmwf_main": sum(m["ecmwf_main"]) / len(m["ecmwf_main"]) if m["ecmwf_main"] else None,
                 "poly_main": sum(m["poly_main"]) / len(m["poly_main"]) if m["poly_main"] else None,
+                "poly_rank_hit": (
+                    sum(m["poly_rank_hit"]) / len(m["poly_rank_hit"]) if m["poly_rank_hit"] else None
+                ),
+                "poly_rank_mean_price": _mean_optional(m["poly_rank_mean_price"]),
                 "tomorrow_main_plus_1": (
                     sum(m["tomorrow_main_plus_1"]) / len(m["tomorrow_main_plus_1"])
                     if m["tomorrow_main_plus_1"]

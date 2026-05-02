@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.repositories import analytics as analytics_repo
-from app.services.analytics import build_strategy_curves
+from app.services.analytics import build_strategy_curves, clamp_poly_rank
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -28,10 +28,11 @@ async def probability_hit_vs_time(
 
 @router.get("/strategy-curves")
 async def strategy_curves(
+    poly_rank: Annotated[int, Query(ge=1, le=8, description="Polymarket rank by price (1=favorite)")] = 1,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     rows = await analytics_repo.get_strategy_curve_rows(session)
-    return build_strategy_curves(rows)
+    return build_strategy_curves(rows, poly_rank=clamp_poly_rank(poly_rank))
 
 
 @router.get("/city-forecast-deviation")

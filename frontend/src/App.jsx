@@ -22,6 +22,7 @@ import "./App.css";
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 const LS_KEY = "weather-vsp:v1";
+const POLY_RANK_LS = "polyRank";
 function loadStored(key, fallback) {
   try {
     const raw = localStorage.getItem(`${LS_KEY}:${key}`);
@@ -368,36 +369,7 @@ const STRATEGY_CURVE_SERIES_DEFAULT = {
   polyEcmwf: false,
 };
 
-/** Union of strategy-curve hours and top-1 prob hours; hit rate may be null without resolved markets. */
-function mergePolyTopConfidenceAndHit(strategyRows, probRows) {
-  const probByHour = new Map();
-  for (const r of probRows || []) {
-    const h = Number(r.bucket_h);
-    if (!Number.isFinite(h)) continue;
-    probByHour.set(h, r);
-  }
-  const stratByHour = new Map();
-  for (const r of strategyRows || []) {
-    const h = Number(r.hours_to_resolve);
-    if (!Number.isFinite(h)) continue;
-    stratByHour.set(h, r);
-  }
-  const hours = [...new Set([...probByHour.keys(), ...stratByHour.keys()])].filter((h) => Number.isFinite(h));
-  hours.sort((a, b) => b - a);
-  return hours.map((h) => {
-    const s = stratByHour.get(h);
-    const p = probByHour.get(h);
-    return {
-      hours_to_resolve: h,
-      poly_main: s?.poly_main ?? null,
-      samples_count_hit: s?.samples_count ?? null,
-      mean_top_bucket_prob: p?.mean_top_bucket_prob ?? null,
-      samples_count_prob: p?.samples_count ?? null,
-    };
-  });
-}
-
-function StrategyCurves({ data, topBucketProbByHour }) {
+function StrategyCurves({ data, polyRank, onPolyRankChange }) {
   const [curveSeries, setCurveSeries] = useState(() =>
     loadStored(STRATEGY_CURVE_SERIES_LS, STRATEGY_CURVE_SERIES_DEFAULT),
   );
@@ -410,17 +382,24 @@ function StrategyCurves({ data, topBucketProbByHour }) {
     setCurveSeries((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const mergedPolyData = useMemo(
-    () => mergePolyTopConfidenceAndHit(data ?? [], topBucketProbByHour ?? []),
-    [data, topBucketProbByHour],
-  );
+  const mergedPolyData = useMemo(() => {
+    if (!Array.isArray(data) || !data.length) return [];
+    return data.map((r) => ({
+      hours_to_resolve: r.hours_to_resolve,
+      poly_rank_hit: r.poly_rank_hit,
+      poly_rank_mean_price: r.poly_rank_mean_price,
+      samples_count: r.samples_count,
+    }));
+  }, [data]);
   const hasStrategy = Array.isArray(data) && data.length > 0;
-  const hasMerged = mergedPolyData.length > 0;
+  const hasMerged = mergedPolyData.some(
+    (r) => r.poly_rank_mean_price != null || r.poly_rank_hit != null,
+  );
 
   if (!hasStrategy && !hasMerged) {
     return (
       <div className="empty-state" style={{ height: 200 }}>
-        <p>No analytics data yet — hit curves need resolved markets; top-1 probability needs snapshots.</p>
+        <p>No analytics data yet — hit curves need resolved markets; Polymarket rank chart needs bucket prices.</p>
       </div>
     );
   }
@@ -451,7 +430,7 @@ function StrategyCurves({ data, topBucketProbByHour }) {
       solo: false,
     },
     {
-      title: "Polymarket top-1: mean price vs hit rate",
+      title: "Polymarket rank: mean price vs hit rate",
       mergedPolyTop: true,
     },
   ];
@@ -488,6 +467,18 @@ function StrategyCurves({ data, topBucketProbByHour }) {
           >
             ECMWF Σp
           </button>
+          <div style={{ display: "inline-flex", gap: 4, marginLeft: 10 }} aria-label="Polymarket price rank (merge chart)">
+            {[1, 2, 3, 4, 5].map((rk) => (
+              <button
+                key={rk}
+                type="button"
+                className={`series-toggle${polyRank === rk ? " active" : ""}`}
+                onClick={() => onPolyRankChange(rk)}
+              >
+                Top-{rk}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="charts-grid">
@@ -496,15 +487,15 @@ function StrategyCurves({ data, topBucketProbByHour }) {
             return (
               <div key={cfg.title} className="card">
                 <div className="card-header">
-                  <span className="card-title">{cfg.title}</span>
+                  <span className="card-title">{`Polymarket top-${polyRank}: mean price vs hit rate`}</span>
                   <span className="card-subtitle">
-                    {`${mergedPolyData.length} time buckets · hit rate = resolved PM only`}
+                    {`${mergedPolyData.length} time buckets · rank by descending price (ties → higher index) · hit = PM final`}
                   </span>
                 </div>
                 <div className="card-body chart-wrap">
                   {!hasMerged ? (
                     <div className="empty-state" style={{ height: 200 }}>
-                      <p>No top-1 probability snapshots yet.</p>
+                      <p>No bucket prices for this rank in snapshots yet.</p>
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
@@ -517,30 +508,27 @@ function StrategyCurves({ data, topBucketProbByHour }) {
                             <ChartTooltip
                               labelFormatter={(v) => `${v}h to resolve`}
                               valueFormatter={(v) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—")}
-                              metaFormatter={(row) => {
-                                const parts = [];
-                                if (row?.samples_count_hit != null) parts.push(`hit n=${row.samples_count_hit}`);
-                                if (row?.samples_count_prob != null) parts.push(`prob n=${row.samples_count_prob}`);
-                                return parts.length ? parts.join(" · ") : null;
-                              }}
+                              metaFormatter={(row) => (
+                                row?.samples_count != null ? `n=${row.samples_count}` : null
+                              )}
                             />
                           )}
                         />
                         <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
                         <Line
                           type="monotone"
-                          dataKey="mean_top_bucket_prob"
+                          dataKey="poly_rank_mean_price"
                           stroke={CHART_THEME.topBucketValue}
                           dot={false}
-                          name="Mean top-1 price"
+                          name={`Mean top-${polyRank} price`}
                           strokeWidth={2.2}
                         />
                         <Line
                           type="monotone"
-                          dataKey="poly_main"
+                          dataKey="poly_rank_hit"
                           stroke={CHART_THEME.poly}
                           dot={false}
-                          name="Top-1 hit rate"
+                          name={`Top-${polyRank} hit rate`}
                           strokeWidth={2}
                         />
                       </LineChart>
@@ -1146,7 +1134,10 @@ export function App() {
   const [cityDeviation, setCityDeviation] = useState([]);
   const [calibrationBinPct, setCalibrationBinPct] = useState(() => Number(loadStored("calibrationBinPct", 5)) === 1 ? 1 : 5);
   const [bucketCalibration, setBucketCalibration] = useState(null);
-  const [topBucketProbVsTime, setTopBucketProbVsTime] = useState([]);
+  const [polyRank, setPolyRank] = useState(() => {
+    const v = Number(loadStored(POLY_RANK_LS, 1));
+    return Number.isFinite(v) && v >= 1 && v <= 5 ? Math.floor(v) : 1;
+  });
   const [view, setView] = useState(() => loadStored("view", "markets"));
   const [selectedSlug, setSelectedSlug] = useState(() => loadStored("selectedSlug", ""));
   const [cityFilter, setCityFilter] = useState(() => loadStored("cityFilter", ""));
@@ -1154,10 +1145,6 @@ export function App() {
 
   const fetchHealth = useCallback(() => {
     apiFetch("/ops/pipeline-health").then(setHealth).catch(console.error);
-  }, []);
-
-  const fetchStrategyCurves = useCallback(() => {
-    apiFetch("/analytics/strategy-curves").then(setStrategyCurves).catch(console.error);
   }, []);
 
   const fetchCityDeviation = useCallback(() => {
@@ -1169,12 +1156,6 @@ export function App() {
   const fetchBucketCalibration = useCallback((binPct) => {
     apiFetch(`/analytics/bucket-calibration?bin_pct=${binPct}`)
       .then(setBucketCalibration)
-      .catch(console.error);
-  }, []);
-
-  const fetchTopBucketProbVsTime = useCallback(() => {
-    apiFetch("/analytics/top-bucket-probability-vs-time")
-      .then(setTopBucketProbVsTime)
       .catch(console.error);
   }, []);
 
@@ -1191,6 +1172,13 @@ export function App() {
   useEffect(() => { saveStored("selectedSlug", selectedSlug); }, [selectedSlug]);
   useEffect(() => { saveStored("cityFilter", cityFilter); }, [cityFilter]);
   useEffect(() => { saveStored("calibrationBinPct", calibrationBinPct); }, [calibrationBinPct]);
+  useEffect(() => { saveStored(POLY_RANK_LS, polyRank); }, [polyRank]);
+
+  const fetchStrategyCurves = useCallback(() => {
+    apiFetch(`/analytics/strategy-curves?poly_rank=${polyRank}`)
+      .then(setStrategyCurves)
+      .catch(console.error);
+  }, [polyRank]);
 
   // Initial data load
   useEffect(() => {
@@ -1199,7 +1187,6 @@ export function App() {
     fetchStrategyCurves();
     fetchCityDeviation();
     fetchBucketCalibration(calibrationBinPct);
-    fetchTopBucketProbVsTime();
   }, []);
 
   // Re-fetch markets when city filter changes
@@ -1210,9 +1197,8 @@ export function App() {
       fetchStrategyCurves();
       fetchCityDeviation();
       fetchBucketCalibration(calibrationBinPct);
-      fetchTopBucketProbVsTime();
     }
-  }, [view, fetchStrategyCurves, fetchCityDeviation, fetchBucketCalibration, calibrationBinPct, fetchTopBucketProbVsTime]);
+  }, [view, fetchStrategyCurves, fetchCityDeviation, fetchBucketCalibration, calibrationBinPct]);
 
   // Poll health every 30 s
   useInterval(fetchHealth, 30_000);
@@ -1340,7 +1326,11 @@ export function App() {
                   Analytics · Hit probability vs hours to resolution
                 </div>
               </div>
-              <StrategyCurves data={strategyCurves} topBucketProbByHour={topBucketProbVsTime} />
+              <StrategyCurves
+                data={strategyCurves}
+                polyRank={polyRank}
+                onPolyRankChange={setPolyRank}
+              />
               <div style={{ marginTop: 12 }}>
                 <CityForecastDeviationChart data={cityDeviation} />
               </div>
