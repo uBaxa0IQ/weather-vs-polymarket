@@ -368,7 +368,36 @@ const STRATEGY_CURVE_SERIES_DEFAULT = {
   polyEcmwf: false,
 };
 
-function StrategyCurves({ data }) {
+/** Union of strategy-curve hours and top-1 prob hours; hit rate may be null without resolved markets. */
+function mergePolyTopConfidenceAndHit(strategyRows, probRows) {
+  const probByHour = new Map();
+  for (const r of probRows || []) {
+    const h = Number(r.bucket_h);
+    if (!Number.isFinite(h)) continue;
+    probByHour.set(h, r);
+  }
+  const stratByHour = new Map();
+  for (const r of strategyRows || []) {
+    const h = Number(r.hours_to_resolve);
+    if (!Number.isFinite(h)) continue;
+    stratByHour.set(h, r);
+  }
+  const hours = [...new Set([...probByHour.keys(), ...stratByHour.keys()])].filter((h) => Number.isFinite(h));
+  hours.sort((a, b) => b - a);
+  return hours.map((h) => {
+    const s = stratByHour.get(h);
+    const p = probByHour.get(h);
+    return {
+      hours_to_resolve: h,
+      poly_main: s?.poly_main ?? null,
+      samples_count_hit: s?.samples_count ?? null,
+      mean_top_bucket_prob: p?.mean_top_bucket_prob ?? null,
+      samples_count_prob: p?.samples_count ?? null,
+    };
+  });
+}
+
+function StrategyCurves({ data, topBucketProbByHour }) {
   const [curveSeries, setCurveSeries] = useState(() =>
     loadStored(STRATEGY_CURVE_SERIES_LS, STRATEGY_CURVE_SERIES_DEFAULT),
   );
@@ -381,10 +410,17 @@ function StrategyCurves({ data }) {
     setCurveSeries((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  if (!data?.length) {
+  const mergedPolyData = useMemo(
+    () => mergePolyTopConfidenceAndHit(data ?? [], topBucketProbByHour ?? []),
+    [data, topBucketProbByHour],
+  );
+  const hasStrategy = Array.isArray(data) && data.length > 0;
+  const hasMerged = mergedPolyData.length > 0;
+
+  if (!hasStrategy && !hasMerged) {
     return (
       <div className="empty-state" style={{ height: 200 }}>
-        <p>No resolved markets yet — curves appear after first resolution.</p>
+        <p>No analytics data yet — hit curves need resolved markets; top-1 probability needs snapshots.</p>
       </div>
     );
   }
@@ -415,12 +451,8 @@ function StrategyCurves({ data }) {
       solo: false,
     },
     {
-      title: "Polymarket top-1 vs final bucket",
-      k1: "poly_main",
-      k2: null,
-      poly1: null,
-      poly2: null,
-      solo: true,
+      title: "Polymarket top-1: mean price vs hit rate",
+      mergedPolyTop: true,
     },
   ];
 
@@ -459,70 +491,133 @@ function StrategyCurves({ data }) {
         </div>
       </div>
       <div className="charts-grid">
-        {charts.map(({ title, k1, k2, poly1, poly2, solo }) => (
-          <div key={title} className="card">
-            <div className="card-header">
-              <span className="card-title">{title}</span>
-              <span className="card-subtitle">{`${data.length} buckets`}</span>
-            </div>
-            <div className="card-body chart-wrap">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-                  <XAxis dataKey="hours_to_resolve" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
-                  <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-                  <Tooltip
-                    content={(
-                      <ChartTooltip
-                        labelFormatter={(v) => `${v}h to resolve`}
-                        metaFormatter={(row) => (
-                          row?.samples_count != null ? `${row.samples_count} records` : null
+        {charts.map((cfg) => {
+          if (cfg.mergedPolyTop) {
+            return (
+              <div key={cfg.title} className="card">
+                <div className="card-header">
+                  <span className="card-title">{cfg.title}</span>
+                  <span className="card-subtitle">
+                    {`${mergedPolyData.length} time buckets · hit rate = resolved PM only`}
+                  </span>
+                </div>
+                <div className="card-body chart-wrap">
+                  {!hasMerged ? (
+                    <div className="empty-state" style={{ height: 200 }}>
+                      <p>No top-1 probability snapshots yet.</p>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={mergedPolyData} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+                        <XAxis dataKey="hours_to_resolve" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
+                        <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+                        <Tooltip
+                          content={(
+                            <ChartTooltip
+                              labelFormatter={(v) => `${v}h to resolve`}
+                              valueFormatter={(v) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—")}
+                              metaFormatter={(row) => {
+                                const parts = [];
+                                if (row?.samples_count_hit != null) parts.push(`hit n=${row.samples_count_hit}`);
+                                if (row?.samples_count_prob != null) parts.push(`prob n=${row.samples_count_prob}`);
+                                return parts.length ? parts.join(" · ") : null;
+                              }}
+                            />
+                          )}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+                        <Line
+                          type="monotone"
+                          dataKey="mean_top_bucket_prob"
+                          stroke={CHART_THEME.topBucketValue}
+                          dot={false}
+                          name="Mean top-1 price"
+                          strokeWidth={2.2}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="poly_main"
+                          stroke={CHART_THEME.poly}
+                          dot={false}
+                          name="Top-1 hit rate"
+                          strokeWidth={2}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+            );
+          }
+          const { title, k1, k2, poly1, poly2 } = cfg;
+          return (
+            <div key={title} className="card">
+              <div className="card-header">
+                <span className="card-title">{title}</span>
+                <span className="card-subtitle">{hasStrategy ? `${data.length} buckets` : "—"}</span>
+              </div>
+              <div className="card-body chart-wrap">
+                {!hasStrategy ? (
+                  <div className="empty-state" style={{ height: 200 }}>
+                    <p>Hit curves need resolved markets (PM winning bucket).</p>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+                      <XAxis dataKey="hours_to_resolve" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
+                      <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+                      <Tooltip
+                        content={(
+                          <ChartTooltip
+                            labelFormatter={(v) => `${v}h to resolve`}
+                            metaFormatter={(row) => (
+                              row?.samples_count != null ? `${row.samples_count} records` : null
+                            )}
+                          />
                         )}
                       />
-                    )}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-                  {solo ? (
-                    <Line type="monotone" dataKey={k1} stroke={CHART_THEME.poly} dot={false} name="Poly top-1" strokeWidth={2} />
-                  ) : (
-                    <>
-                      {curveSeries.tomorrow && (
-                        <Line type="monotone" dataKey={k1} stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
-                      )}
-                      {curveSeries.ecmwf && k2 && (
-                        <Line type="monotone" dataKey={k2} stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
-                      )}
-                      {curveSeries.polyTomorrow && poly1 && (
-                        <Line
-                          type="monotone"
-                          dataKey={poly1}
-                          stroke={CHART_THEME.tomorrow}
-                          dot={false}
-                          name="Tomorrow Σp"
-                          strokeWidth={1.6}
-                          strokeDasharray="6 4"
-                          strokeOpacity={0.85}
-                        />
-                      )}
-                      {curveSeries.polyEcmwf && poly2 && (
-                        <Line
-                          type="monotone"
-                          dataKey={poly2}
-                          stroke={CHART_THEME.ecmwf}
-                          dot={false}
-                          name="ECMWF Σp"
-                          strokeWidth={1.6}
-                          strokeDasharray="6 4"
-                          strokeOpacity={0.85}
-                        />
-                      )}
-                    </>
-                  )}
-                </LineChart>
-              </ResponsiveContainer>
+                      <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+                      <>
+                        {curveSeries.tomorrow && (
+                          <Line type="monotone" dataKey={k1} stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow" strokeWidth={2} />
+                        )}
+                        {curveSeries.ecmwf && k2 && (
+                          <Line type="monotone" dataKey={k2} stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF" strokeWidth={2} />
+                        )}
+                        {curveSeries.polyTomorrow && poly1 && (
+                          <Line
+                            type="monotone"
+                            dataKey={poly1}
+                            stroke={CHART_THEME.tomorrow}
+                            dot={false}
+                            name="Tomorrow Σp"
+                            strokeWidth={1.6}
+                            strokeDasharray="6 4"
+                            strokeOpacity={0.85}
+                          />
+                        )}
+                        {curveSeries.polyEcmwf && poly2 && (
+                          <Line
+                            type="monotone"
+                            dataKey={poly2}
+                            stroke={CHART_THEME.ecmwf}
+                            dot={false}
+                            name="ECMWF Σp"
+                            strokeWidth={1.6}
+                            strokeDasharray="6 4"
+                            strokeOpacity={0.85}
+                          />
+                        )}
+                      </>
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );
@@ -693,47 +788,6 @@ function AllBucketsCalibrationChart({ data, binPct, onChangeBinPct }) {
             <Line type="monotone" dataKey="ideal_prob" stroke="#8b949e" dot={false} name="Ideal (y=x)" strokeWidth={1.5} />
             <Line type="monotone" dataKey="observed_hit_rate" stroke={CHART_THEME.topBucketValue} dot={false} name="Observed hit rate" strokeWidth={2.3} />
             <Line type="monotone" dataKey="predicted_mean" stroke={CHART_THEME.poly} dot={false} name="Predicted mean" strokeWidth={1.7} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-}
-
-function TopBucketProbabilityVsTimeChart({ data }) {
-  if (!data?.length) {
-    return (
-      <div className="empty-state" style={{ height: 200 }}>
-        <p>No top-1 probability data yet.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="card">
-      <div className="card-header">
-        <span className="card-title">Top-1 bucket probability vs time</span>
-        <span className="card-subtitle">{data.length} buckets</span>
-      </div>
-      <div className="card-body chart-wrap">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-            <XAxis dataKey="bucket_h" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
-            <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-            <Tooltip
-              content={(
-                <ChartTooltip
-                  labelFormatter={(v) => `${v}h to resolve`}
-                  valueFormatter={(v) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—")}
-                  metaFormatter={(row) => (
-                    row?.samples_count != null ? `${row.samples_count} records` : null
-                  )}
-                />
-              )}
-            />
-            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-            <Line type="monotone" dataKey="mean_top_bucket_prob" stroke={CHART_THEME.topBucketValue} dot={false} name="Mean" strokeWidth={2.2} />
-            <Line type="monotone" dataKey="p50_top_bucket_prob" stroke={CHART_THEME.poly} dot={false} name="P50" strokeWidth={1.8} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -1286,10 +1340,7 @@ export function App() {
                   Analytics · Hit probability vs hours to resolution
                 </div>
               </div>
-              <StrategyCurves data={strategyCurves} />
-              <div style={{ marginTop: 12 }}>
-                <TopBucketProbabilityVsTimeChart data={topBucketProbVsTime} />
-              </div>
+              <StrategyCurves data={strategyCurves} topBucketProbByHour={topBucketProbVsTime} />
               <div style={{ marginTop: 12 }}>
                 <CityForecastDeviationChart data={cityDeviation} />
               </div>

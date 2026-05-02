@@ -280,8 +280,6 @@ async def get_top_bucket_probability_vs_time(session: AsyncSession) -> list[dict
         select(
             bucket_h,
             func.avg(MarketSnapshot.top_bucket_prob).label("mean_top_bucket_prob"),
-            func.percentile_cont(0.5).within_group(MarketSnapshot.top_bucket_prob).label("p50_top_bucket_prob"),
-            func.percentile_cont(0.9).within_group(MarketSnapshot.top_bucket_prob).label("p90_top_bucket_prob"),
             func.count().label("samples_count"),
         )
         .where(
@@ -296,7 +294,6 @@ async def get_top_bucket_probability_vs_time(session: AsyncSession) -> list[dict
     result = await session.execute(q)
     rows = [dict(r._mapping) for r in result.all()]
     for r in rows:
-        for key in ("mean_top_bucket_prob", "p50_top_bucket_prob", "p90_top_bucket_prob"):
-            if r.get(key) is not None:
-                r[key] = float(r[key])
+        if r.get("mean_top_bucket_prob") is not None:
+            r["mean_top_bucket_prob"] = float(r["mean_top_bucket_prob"])
     return rows
