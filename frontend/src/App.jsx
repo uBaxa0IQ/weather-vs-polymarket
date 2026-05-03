@@ -305,8 +305,15 @@ function PipelineControl({ health }) {
           <div className="stat-value green">{health?.active_markets ?? "—"}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Resolved</div>
+          <div className="stat-label" title="Polymarket (UMA) final outcome">
+            PM resolved
+          </div>
           <div className="stat-value">{health?.resolved_markets ?? "—"}</div>
+          {health?.nominally_resolved_markets != null && health.nominally_resolved_markets > 0 && (
+            <div className="stat-footnote" title="Past nominal resolve time; awaiting PM / UMA">
+              Nominal only: {health.nominally_resolved_markets}
+            </div>
+          )}
         </div>
       </div>
 

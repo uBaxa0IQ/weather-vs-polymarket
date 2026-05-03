@@ -193,6 +193,16 @@ body {
 
 .stat-value.green { color: var(--green); }
 
+.stat-footnote {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.25;
+  color: var(--text-3);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .status-row {
   display: flex;
   align-items: center;

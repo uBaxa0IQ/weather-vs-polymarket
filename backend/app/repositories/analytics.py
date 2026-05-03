@@ -89,14 +89,20 @@ async def get_pipeline_health(session: AsyncSession) -> dict:
     active_count = await session.scalar(
         select(func.count()).where(Market.status == "tracking").select_from(Market)
     )
-    resolved_count = await session.scalar(
-        select(func.count()).where(Market.status.in_(("nominally_resolved", "pm_resolved"))).select_from(Market)
+    pm_resolved_count = await session.scalar(
+        select(func.count()).where(Market.status == "pm_resolved").select_from(Market)
+    )
+    nominal_count = await session.scalar(
+        select(func.count()).where(Market.status == "nominally_resolved").select_from(Market)
     )
 
     return {
         "last_run": dict(last_row._mapping) if last_row else None,
         "active_markets": active_count or 0,
-        "resolved_markets": resolved_count or 0,
+        # Polymarket / UMA resolved only (main dashboard number)
+        "resolved_markets": pm_resolved_count or 0,
+        # Past nominal_resolve time but PM outcome not finalized yet
+        "nominally_resolved_markets": nominal_count or 0,
     }
 
 
