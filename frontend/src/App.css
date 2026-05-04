@@ -349,8 +349,8 @@ body {
   background: rgba(188, 140, 255, 0.07);
 }
 .market-card--align-all-three {
-  box-shadow: inset 3px 0 0 rgba(242, 204, 96, 0.95);
-  background: rgba(242, 204, 96, 0.09);
+  box-shadow: inset 3px 0 0 rgba(63, 185, 80, 0.95);
+  background: rgba(63, 185, 80, 0.1);
 }
 .market-card--align-tomorrow-poly:hover,
 .market-card--align-ecmwf-poly:hover,
