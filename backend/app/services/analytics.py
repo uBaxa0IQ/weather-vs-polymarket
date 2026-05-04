@@ -200,53 +200,67 @@ def build_consensus_hit_vs_time(
     model: str = "tomorrow"
 ) -> list[dict[str, Any]]:
     """
-    Computes hit probability when the weather model matches Polymarket's top bucket.
+    When the weather model bucket matches Polymarket's top bucket:
+    hit rate vs PM final, and mean normalized Poly mass (Σp) on that bucket.
     """
-    agg: dict[int, list[int]] = defaultdict(list)
-    
+    agg: dict[int, dict[str, list[Any]]] = defaultdict(lambda: {"hits": [], "poly_mass": []})
+
     for row in rows:
         final_idx_raw = row.get("pm_winning_bucket_index")
         if final_idx_raw is None:
             continue
         final_idx = int(final_idx_raw)
-        
+
         labels = row.get("bucket_labels_json") or []
         if not labels:
             continue
-            
+
         t_bucket = int(round(float(row.get("time_to_resolve_hours") or 0)))
-        
+
         if model == "tomorrow":
             temp = row.get("tomorrow_max")
         elif model == "ecmwf":
             temp = row.get("ecmwf_max")
         else:
             continue
-            
+
         if temp is None:
             continue
-            
+
         pred_idx = temp_to_bucket_index(float(temp), labels)
         poly_idx = row.get("top_bucket_index")
-        
+
         if pred_idx is None or poly_idx is None:
             continue
-            
+
         if pred_idx == int(poly_idx):
-            # They agree! Did they get it right?
+            cell = agg[t_bucket]
             hit = 1 if pred_idx == final_idx else 0
-            agg[t_bucket].append(hit)
-            
+            cell["hits"].append(hit)
+            norm = _normalized_bucket_probs(row.get("bucket_prices_json"))
+            mass = _poly_mass_on_indices(norm, [pred_idx]) if norm is not None else None
+            if mass is not None:
+                cell["poly_mass"].append(float(mass))
+
     out: list[dict[str, Any]] = []
     for bucket_h in sorted(agg.keys(), reverse=True):
-        hits = agg[bucket_h]
+        cell = agg[bucket_h]
+        hits = cell["hits"]
+        masses = cell["poly_mass"]
         if not hits:
             continue
-        out.append({
+        row_out: dict[str, Any] = {
             "hours_to_resolve": bucket_h,
             "samples_count": len(hits),
-            "hit_prob": sum(hits) / len(hits)
-        })
+            "hit_prob": sum(hits) / len(hits),
+        }
+        if masses:
+            row_out["mean_poly_mass"] = sum(masses) / len(masses)
+            row_out["poly_mass_samples"] = len(masses)
+        else:
+            row_out["mean_poly_mass"] = None
+            row_out["poly_mass_samples"] = 0
+        out.append(row_out)
     return out
 
 

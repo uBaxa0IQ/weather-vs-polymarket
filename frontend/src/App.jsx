@@ -23,6 +23,21 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 const LS_KEY = "weather-vsp:v1";
 const POLY_RANK_LS = "polyRank";
+const CHART_MAX_HOURS_LS = "chartMaxHoursToResolve";
+
+/** Rows with `hours_to_resolve` ≤ max (hours before market resolution). null / ≤0 = show all. */
+function filterByMaxHoursToResolve(rows, maxHours) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows ?? [];
+  if (maxHours == null || maxHours <= 0) return rows;
+  const cap = Math.min(Math.floor(Number(maxHours)), 9999);
+  if (!Number.isFinite(cap) || cap < 1) return rows;
+  return rows.filter((r) => {
+    const h = r?.hours_to_resolve;
+    if (h == null) return false;
+    const n = Number(h);
+    return Number.isFinite(n) && n <= cap;
+  });
+}
 function loadStored(key, fallback) {
   try {
     const raw = localStorage.getItem(`${LS_KEY}:${key}`);
@@ -376,11 +391,24 @@ const STRATEGY_CURVE_SERIES_DEFAULT = {
   polyEcmwf: false,
 };
 
-function ConsensusHitRateChart({ tomorrowData, ecmwfData }) {
+function ConsensusHitRateChart({
+  tomorrowData,
+  ecmwfData,
+  showHourWindowEmptyHint,
+  maxHoursCaption,
+  curveSeries,
+  onToggleCurveSeries,
+}) {
   const merged = useMemo(() => {
     const map = new Map();
     for (const d of tomorrowData || []) {
-      map.set(d.hours_to_resolve, { hours_to_resolve: d.hours_to_resolve, tomorrow_hit: d.hit_prob, tomorrow_n: d.samples_count });
+      map.set(d.hours_to_resolve, {
+        hours_to_resolve: d.hours_to_resolve,
+        tomorrow_hit: d.hit_prob,
+        tomorrow_n: d.samples_count,
+        tomorrow_poly_mass: d.mean_poly_mass ?? null,
+        tomorrow_poly_mass_n: d.poly_mass_samples ?? 0,
+      });
     }
     for (const d of ecmwfData || []) {
       if (!map.has(d.hours_to_resolve)) {
@@ -389,75 +417,159 @@ function ConsensusHitRateChart({ tomorrowData, ecmwfData }) {
       const item = map.get(d.hours_to_resolve);
       item.ecmwf_hit = d.hit_prob;
       item.ecmwf_n = d.samples_count;
+      item.ecmwf_poly_mass = d.mean_poly_mass ?? null;
+      item.ecmwf_poly_mass_n = d.poly_mass_samples ?? 0;
     }
+    // Same reading as strategy curves: left = more hours to resolve, right → resolution.
     return Array.from(map.values()).sort((a, b) => b.hours_to_resolve - a.hours_to_resolve);
   }, [tomorrowData, ecmwfData]);
 
-  if (!merged.length) {
-    return (
-      <div className="card">
-        <div className="card-header">
-          <span className="card-title">Consensus Accuracy vs Time</span>
-          <span className="card-subtitle">Probability of correct outcome when model matches Polymarket top bucket</span>
-        </div>
-        <div className="empty-state" style={{ height: 180 }}>
-          <p>No consensus data available yet.</p>
-        </div>
-      </div>
-    );
-  }
+  const hasData = merged.length > 0;
+  const maxHPart =
+    maxHoursCaption != null && maxHoursCaption > 0 ? ` · ≤${maxHoursCaption}h window` : "";
 
   return (
     <div className="card">
       <div className="card-header">
-        <span className="card-title">Consensus Accuracy vs Time</span>
-        <span className="card-subtitle">Probability of correct outcome when model matches Polymarket top bucket</span>
+        <span className="card-title">Model–Polymarket consensus hit rate</span>
+        <span className="card-subtitle">
+          {hasData
+            ? `When forecast bucket = Poly top bucket · ${merged.length} time buckets${maxHPart} · hit = PM final · dashed = Poly Σp · same four toggles as Main bucket (shared state)`
+            : `When forecast bucket = Poly top bucket · hit = PM final${maxHPart}`}
+        </span>
+      </div>
+      <div style={{ marginBottom: 10, padding: "0 12px" }}>
+        <div className="series-toggle-row" aria-label="Consensus chart series (same as Main bucket hit)">
+          <button
+            type="button"
+            className={`series-toggle${curveSeries.tomorrow ? " active" : ""}`}
+            onClick={() => onToggleCurveSeries("tomorrow")}
+          >
+            Tomorrow
+          </button>
+          <button
+            type="button"
+            className={`series-toggle${curveSeries.ecmwf ? " active" : ""}`}
+            onClick={() => onToggleCurveSeries("ecmwf")}
+          >
+            ECMWF
+          </button>
+          <button
+            type="button"
+            className={`series-toggle${curveSeries.polyTomorrow ? " active" : ""}`}
+            onClick={() => onToggleCurveSeries("polyTomorrow")}
+          >
+            Tomorrow Σp
+          </button>
+          <button
+            type="button"
+            className={`series-toggle${curveSeries.polyEcmwf ? " active" : ""}`}
+            onClick={() => onToggleCurveSeries("polyEcmwf")}
+          >
+            ECMWF Σp
+          </button>
+        </div>
       </div>
       <div className="card-body chart-wrap">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={merged} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-            <XAxis dataKey="hours_to_resolve" reversed {...axisProps("bottom")} label={{ value: "Hours to resolve", position: "insideBottom", offset: -5, fill: "var(--text-2)", fontSize: 11 }} />
-            <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-            <Tooltip
-              content={(
-                <ChartTooltip
-                  labelFormatter={(v) => `${v}h to resolve`}
-                  valueFormatter={(v) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—")}
-                  metaFormatter={(row) => {
-                    const nT = row?.tomorrow_n;
-                    const nE = row?.ecmwf_n;
-                    if (nT != null && nE != null) return `n=${nT} (Tom), n=${nE} (ECM)`;
-                    if (nT != null) return `n=${nT} (Tom)`;
-                    if (nE != null) return `n=${nE} (ECM)`;
-                    return null;
-                  }}
+        {!hasData ? (
+          <div className="empty-state" style={{ height: 200 }}>
+            {showHourWindowEmptyHint ? (
+              <p>No consensus points in this hour window — increase <strong>Max h</strong> or clear it (empty = all hours).</p>
+            ) : (
+              <p>No consensus samples yet — needs snapshots where model bucket matches Poly top bucket.</p>
+            )}
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={merged} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+              <XAxis dataKey="hours_to_resolve" {...axisProps("bottom")} tickFormatter={(v) => `${v}h`} />
+              <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+              <Tooltip
+                content={(
+                  <ChartTooltip
+                    labelFormatter={(v) => `${v}h to resolve`}
+                    valueFormatter={(v) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—")}
+                    metaFormatter={(row) => {
+                      const parts = [];
+                      if (curveSeries.tomorrow && row?.tomorrow_n != null) parts.push(`Tomorrow n=${row.tomorrow_n}`);
+                      if (curveSeries.ecmwf && row?.ecmwf_n != null) parts.push(`ECMWF n=${row.ecmwf_n}`);
+                      if (curveSeries.polyTomorrow && row?.tomorrow_poly_mass_n > 0) {
+                        parts.push(`Tomorrow Σp n=${row.tomorrow_poly_mass_n}`);
+                      }
+                      if (curveSeries.polyEcmwf && row?.ecmwf_poly_mass_n > 0) {
+                        parts.push(`ECMWF Σp n=${row.ecmwf_poly_mass_n}`);
+                      }
+                      return parts.length ? parts.join(" · ") : null;
+                    }}
+                  />
+                )}
+              />
+              <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+              {curveSeries.tomorrow && (
+                <Line
+                  type="monotone"
+                  dataKey="tomorrow_hit"
+                  stroke={CHART_THEME.tomorrow}
+                  dot={false}
+                  name="Tomorrow"
+                  strokeWidth={2}
                 />
               )}
-            />
-            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
-            <Line type="monotone" dataKey="tomorrow_hit" stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow Consensus" strokeWidth={2} />
-            <Line type="monotone" dataKey="ecmwf_hit" stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF Consensus" strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
+              {curveSeries.ecmwf && (
+                <Line
+                  type="monotone"
+                  dataKey="ecmwf_hit"
+                  stroke={CHART_THEME.ecmwf}
+                  dot={false}
+                  name="ECMWF"
+                  strokeWidth={2}
+                />
+              )}
+              {curveSeries.polyTomorrow && (
+                <Line
+                  type="monotone"
+                  dataKey="tomorrow_poly_mass"
+                  stroke={CHART_THEME.tomorrow}
+                  dot={false}
+                  name="Tomorrow Σp"
+                  strokeWidth={1.6}
+                  strokeDasharray="6 4"
+                  strokeOpacity={0.85}
+                  connectNulls={false}
+                />
+              )}
+              {curveSeries.polyEcmwf && (
+                <Line
+                  type="monotone"
+                  dataKey="ecmwf_poly_mass"
+                  stroke={CHART_THEME.ecmwf}
+                  dot={false}
+                  name="ECMWF Σp"
+                  strokeWidth={1.6}
+                  strokeDasharray="6 4"
+                  strokeOpacity={0.85}
+                  connectNulls={false}
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );
 }
 
-function StrategyCurves({ data, polyRank, onPolyRankChange }) {
-  const [curveSeries, setCurveSeries] = useState(() =>
-    loadStored(STRATEGY_CURVE_SERIES_LS, STRATEGY_CURVE_SERIES_DEFAULT),
-  );
-
-  useEffect(() => {
-    saveStored(STRATEGY_CURVE_SERIES_LS, curveSeries);
-  }, [curveSeries]);
-
-  const toggleCurveSeries = (key) => {
-    setCurveSeries((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
+function StrategyCurves({
+  data,
+  polyRank,
+  onPolyRankChange,
+  maxHoursToResolve,
+  onMaxHoursToResolveChange,
+  unfilteredRowCount,
+  curveSeries,
+  onToggleCurveSeries,
+}) {
   const mergedPolyData = useMemo(() => {
     if (!Array.isArray(data) || !data.length) return [];
     return data.map((r) => ({
@@ -471,14 +583,10 @@ function StrategyCurves({ data, polyRank, onPolyRankChange }) {
   const hasMerged = mergedPolyData.some(
     (r) => r.poly_rank_mean_price != null || r.poly_rank_hit != null,
   );
-
-  if (!hasStrategy && !hasMerged) {
-    return (
-      <div className="empty-state" style={{ height: 200 }}>
-        <p>No analytics data yet — hit curves need resolved markets; Polymarket rank chart needs bucket prices.</p>
-      </div>
-    );
-  }
+  const hourWindowBlocksCharts =
+    (unfilteredRowCount ?? 0) > 0 && !hasStrategy && !hasMerged && maxHoursToResolve != null && maxHoursToResolve > 0;
+  const hourWindowSuffix =
+    maxHoursToResolve != null && maxHoursToResolve > 0 ? ` · ≤${maxHoursToResolve}h` : "";
 
   const charts = [
     {
@@ -518,28 +626,28 @@ function StrategyCurves({ data, polyRank, onPolyRankChange }) {
           <button
             type="button"
             className={`series-toggle${curveSeries.tomorrow ? " active" : ""}`}
-            onClick={() => toggleCurveSeries("tomorrow")}
+            onClick={() => onToggleCurveSeries("tomorrow")}
           >
             Tomorrow
           </button>
           <button
             type="button"
             className={`series-toggle${curveSeries.ecmwf ? " active" : ""}`}
-            onClick={() => toggleCurveSeries("ecmwf")}
+            onClick={() => onToggleCurveSeries("ecmwf")}
           >
             ECMWF
           </button>
           <button
             type="button"
             className={`series-toggle${curveSeries.polyTomorrow ? " active" : ""}`}
-            onClick={() => toggleCurveSeries("polyTomorrow")}
+            onClick={() => onToggleCurveSeries("polyTomorrow")}
           >
             Tomorrow Σp
           </button>
           <button
             type="button"
             className={`series-toggle${curveSeries.polyEcmwf ? " active" : ""}`}
-            onClick={() => toggleCurveSeries("polyEcmwf")}
+            onClick={() => onToggleCurveSeries("polyEcmwf")}
           >
             ECMWF Σp
           </button>
@@ -555,8 +663,56 @@ function StrategyCurves({ data, polyRank, onPolyRankChange }) {
               </button>
             ))}
           </div>
+          <div
+            className="chart-hours-cap"
+            title="Only include buckets where hours to resolve ≤ this value. Applies to all line charts on this page. Empty = no limit."
+          >
+            <label htmlFor="dash-max-hours" className="chart-hours-cap-label">Max h</label>
+            <input
+              id="dash-max-hours"
+              type="number"
+              min={1}
+              max={9999}
+              step={1}
+              className="chart-max-hours-input"
+              placeholder="∞"
+              aria-label="Maximum hours to resolve on charts"
+              value={maxHoursToResolve ?? ""}
+              onChange={(e) => {
+                const t = e.target.value.trim();
+                if (t === "") {
+                  onMaxHoursToResolveChange(null);
+                  return;
+                }
+                const n = Math.floor(Number(t));
+                if (!Number.isFinite(n) || n < 1) return;
+                onMaxHoursToResolveChange(Math.min(n, 9999));
+              }}
+            />
+            {maxHoursToResolve != null && maxHoursToResolve > 0 && (
+              <button
+                type="button"
+                className="series-toggle"
+                onClick={() => onMaxHoursToResolveChange(null)}
+                title="Show all hours to resolve"
+              >
+                All
+              </button>
+            )}
+          </div>
         </div>
       </div>
+      {!hasStrategy && !hasMerged ? (
+        <div className="empty-state" style={{ height: 200 }}>
+          {hourWindowBlocksCharts ? (
+            <p>
+              No buckets with hours to resolve ≤ <strong>{maxHoursToResolve}h</strong> — raise <strong>Max h</strong> or leave it empty for all hours.
+            </p>
+          ) : (
+            <p>No analytics data yet — hit curves need resolved markets; Polymarket rank chart needs bucket prices.</p>
+          )}
+        </div>
+      ) : (
       <div className="charts-grid">
         {charts.map((cfg) => {
           if (cfg.mergedPolyTop) {
@@ -565,7 +721,7 @@ function StrategyCurves({ data, polyRank, onPolyRankChange }) {
                 <div className="card-header">
                   <span className="card-title">{`Polymarket top-${polyRank}: mean price vs hit rate`}</span>
                   <span className="card-subtitle">
-                    {`${mergedPolyData.length} time buckets · rank by descending price (ties → higher index) · hit = PM final`}
+                    {`${mergedPolyData.length} time buckets${hourWindowSuffix} · rank by descending price (ties → higher index) · hit = PM final`}
                   </span>
                 </div>
                 <div className="card-body chart-wrap">
@@ -619,7 +775,7 @@ function StrategyCurves({ data, polyRank, onPolyRankChange }) {
             <div key={title} className="card">
               <div className="card-header">
                 <span className="card-title">{title}</span>
-                <span className="card-subtitle">{hasStrategy ? `${data.length} buckets` : "—"}</span>
+                <span className="card-subtitle">{hasStrategy ? `${data.length} buckets${hourWindowSuffix}` : "—"}</span>
               </div>
               <div className="card-body chart-wrap">
                 {!hasStrategy ? (
@@ -683,6 +839,7 @@ function StrategyCurves({ data, polyRank, onPolyRankChange }) {
           );
         })}
       </div>
+      )}
     </>
   );
 }
@@ -1216,10 +1373,23 @@ export function App() {
     const v = Number(loadStored(POLY_RANK_LS, 1));
     return Number.isFinite(v) && v >= 1 && v <= 5 ? Math.floor(v) : 1;
   });
+  const [chartMaxHoursToResolve, setChartMaxHoursToResolve] = useState(() => {
+    const v = loadStored(CHART_MAX_HOURS_LS, null);
+    if (v === null || v === undefined) return null;
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 9999) : null;
+  });
   const [view, setView] = useState(() => loadStored("view", "markets"));
   const [selectedSlug, setSelectedSlug] = useState(() => loadStored("selectedSlug", ""));
   const [cityFilter, setCityFilter] = useState(() => loadStored("cityFilter", ""));
   const [marketsError, setMarketsError] = useState(null);
+  const [curveSeries, setCurveSeries] = useState(() =>
+    loadStored(STRATEGY_CURVE_SERIES_LS, STRATEGY_CURVE_SERIES_DEFAULT),
+  );
+
+  const toggleCurveSeries = useCallback((key) => {
+    setCurveSeries((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const fetchHealth = useCallback(() => {
     apiFetch("/ops/pipeline-health").then(setHealth).catch(console.error);
@@ -1251,6 +1421,8 @@ export function App() {
   useEffect(() => { saveStored("cityFilter", cityFilter); }, [cityFilter]);
   useEffect(() => { saveStored("calibrationBinPct", calibrationBinPct); }, [calibrationBinPct]);
   useEffect(() => { saveStored(POLY_RANK_LS, polyRank); }, [polyRank]);
+  useEffect(() => { saveStored(CHART_MAX_HOURS_LS, chartMaxHoursToResolve); }, [chartMaxHoursToResolve]);
+  useEffect(() => { saveStored(STRATEGY_CURVE_SERIES_LS, curveSeries); }, [curveSeries]);
 
   const fetchStrategyCurves = useCallback(() => {
     apiFetch(`/analytics/strategy-curves?poly_rank=${polyRank}`)
@@ -1298,6 +1470,25 @@ export function App() {
     () => markets.find((m) => m.event_slug === selectedSlug) ?? null,
     [markets, selectedSlug],
   );
+
+  const strategyCurvesForCharts = useMemo(
+    () => filterByMaxHoursToResolve(strategyCurves, chartMaxHoursToResolve),
+    [strategyCurves, chartMaxHoursToResolve],
+  );
+  const consensusTomorrowFiltered = useMemo(
+    () => filterByMaxHoursToResolve(consensusHitTomorrow, chartMaxHoursToResolve),
+    [consensusHitTomorrow, chartMaxHoursToResolve],
+  );
+  const consensusEcmwfFiltered = useMemo(
+    () => filterByMaxHoursToResolve(consensusHitEcmwf, chartMaxHoursToResolve),
+    [consensusHitEcmwf, chartMaxHoursToResolve],
+  );
+  const consensusHourWindowEmpty =
+    chartMaxHoursToResolve != null &&
+    chartMaxHoursToResolve > 0 &&
+    ((consensusHitTomorrow?.length ?? 0) > 0 || (consensusHitEcmwf?.length ?? 0) > 0) &&
+    consensusTomorrowFiltered.length === 0 &&
+    consensusEcmwfFiltered.length === 0;
 
   const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
@@ -1415,15 +1606,24 @@ export function App() {
                   Analytics · Hit probability vs hours to resolution
                 </div>
               </div>
-              <ConsensusHitRateChart
-                tomorrowData={consensusHitTomorrow}
-                ecmwfData={consensusHitEcmwf}
+              <StrategyCurves
+                data={strategyCurvesForCharts}
+                polyRank={polyRank}
+                onPolyRankChange={setPolyRank}
+                maxHoursToResolve={chartMaxHoursToResolve}
+                onMaxHoursToResolveChange={setChartMaxHoursToResolve}
+                unfilteredRowCount={strategyCurves.length}
+                curveSeries={curveSeries}
+                onToggleCurveSeries={toggleCurveSeries}
               />
               <div style={{ marginTop: 12 }}>
-                <StrategyCurves
-                  data={strategyCurves}
-                  polyRank={polyRank}
-                  onPolyRankChange={setPolyRank}
+                <ConsensusHitRateChart
+                  tomorrowData={consensusTomorrowFiltered}
+                  ecmwfData={consensusEcmwfFiltered}
+                  showHourWindowEmptyHint={consensusHourWindowEmpty}
+                  maxHoursCaption={chartMaxHoursToResolve}
+                  curveSeries={curveSeries}
+                  onToggleCurveSeries={toggleCurveSeries}
                 />
               </div>
               <div style={{ marginTop: 12 }}>
