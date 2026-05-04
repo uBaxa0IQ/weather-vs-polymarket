@@ -175,6 +175,25 @@ function bucketIndexForTemp(temp, labels) {
   return null;
 }
 
+/** Latest snapshot: model bucket vs Polymarket top bucket (same `bucketIndexForTemp` as charts). */
+function forecastPolyAlignmentClass(market) {
+  if (market.status !== "tracking") return "";
+  const snap = market.latest_snapshot;
+  if (!snap || !Array.isArray(snap.bucket_labels_json) || snap.bucket_labels_json.length === 0) return "";
+  if (snap.top_bucket_index == null) return "";
+  const labels = snap.bucket_labels_json;
+  const p = Number(snap.top_bucket_index);
+  if (!Number.isFinite(p) || p < 0) return "";
+  const tIdx = bucketIndexForTemp(snap.tomorrow_max, labels);
+  const eIdx = bucketIndexForTemp(snap.ecmwf_max, labels);
+  const tMatch = tIdx !== null && tIdx === p;
+  const eMatch = eIdx !== null && eIdx === p;
+  if (tMatch && eMatch) return " market-card--align-all-three";
+  if (tMatch) return " market-card--align-tomorrow-poly";
+  if (eMatch) return " market-card--align-ecmwf-poly";
+  return "";
+}
+
 function findWinningLabelIndex(pmLabel, labels) {
   if (pmLabel == null || !Array.isArray(labels) || labels.length === 0) return -1;
   const raw = String(pmLabel).trim();
@@ -358,9 +377,20 @@ function MarketCard({ market, selected, onClick }) {
   const isTracking = market.status === "tracking";
   const isPmResolved = market.status === "pm_resolved";
   const statusLabel = isTracking ? "Tracking" : (isPmResolved ? "PM resolved" : "Nominal resolved");
+  const alignCls = forecastPolyAlignmentClass(market);
+  const alignTitle =
+    alignCls.includes("all-three")
+      ? "Tomorrow & ECMWF buckets match Polymarket top bucket (latest snapshot)"
+      : alignCls.includes("tomorrow-poly")
+        ? "Tomorrow bucket matches Polymarket top bucket"
+        : alignCls.includes("ecmwf-poly")
+          ? "ECMWF bucket matches Polymarket top bucket"
+          : undefined;
   return (
     <button
-      className={`market-card${selected ? " selected" : ""}`}
+      type="button"
+      className={`market-card${selected ? " selected" : ""}${alignCls}`}
+      title={alignTitle}
       onClick={() => onClick(market.event_slug)}
     >
       <div className="card-top">

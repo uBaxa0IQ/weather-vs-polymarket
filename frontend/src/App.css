@@ -339,6 +339,25 @@ body {
   border-color: var(--indigo);
 }
 
+/* Latest snapshot: model bucket vs Poly top (tracking only; see forecastPolyAlignmentClass) */
+.market-card--align-tomorrow-poly {
+  box-shadow: inset 3px 0 0 rgba(255, 123, 114, 0.9);
+  background: rgba(255, 123, 114, 0.05);
+}
+.market-card--align-ecmwf-poly {
+  box-shadow: inset 3px 0 0 rgba(188, 140, 255, 0.9);
+  background: rgba(188, 140, 255, 0.07);
+}
+.market-card--align-all-three {
+  box-shadow: inset 3px 0 0 rgba(242, 204, 96, 0.95);
+  background: rgba(242, 204, 96, 0.09);
+}
+.market-card--align-tomorrow-poly:hover,
+.market-card--align-ecmwf-poly:hover,
+.market-card--align-all-three:hover {
+  filter: brightness(1.04);
+}
+
 .card-top {
   display: flex;
   align-items: center;
