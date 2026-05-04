@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.repositories import analytics as analytics_repo
-from app.services.analytics import build_strategy_curves, clamp_poly_rank
+from app.services.analytics import build_strategy_curves, clamp_poly_rank, build_consensus_hit_vs_time
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -24,6 +24,15 @@ async def probability_hit_vs_time(
     else:
         value_col = "top_bucket_index"
     return await analytics_repo.get_probability_hit_vs_time(session, value_col)
+
+
+@router.get("/consensus-hit-vs-time")
+async def consensus_hit_vs_time(
+    model: Annotated[str, Query(pattern="^(tomorrow|ecmwf)$")] = "tomorrow",
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    rows = await analytics_repo.get_strategy_curve_rows(session)
+    return build_consensus_hit_vs_time(rows, model=model)
 
 
 @router.get("/strategy-curves")

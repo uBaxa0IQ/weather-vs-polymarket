@@ -376,6 +376,75 @@ const STRATEGY_CURVE_SERIES_DEFAULT = {
   polyEcmwf: false,
 };
 
+function ConsensusHitRateChart({ tomorrowData, ecmwfData }) {
+  const merged = useMemo(() => {
+    const map = new Map();
+    for (const d of tomorrowData || []) {
+      map.set(d.hours_to_resolve, { hours_to_resolve: d.hours_to_resolve, tomorrow_hit: d.hit_prob, tomorrow_n: d.samples_count });
+    }
+    for (const d of ecmwfData || []) {
+      if (!map.has(d.hours_to_resolve)) {
+        map.set(d.hours_to_resolve, { hours_to_resolve: d.hours_to_resolve });
+      }
+      const item = map.get(d.hours_to_resolve);
+      item.ecmwf_hit = d.hit_prob;
+      item.ecmwf_n = d.samples_count;
+    }
+    return Array.from(map.values()).sort((a, b) => b.hours_to_resolve - a.hours_to_resolve);
+  }, [tomorrowData, ecmwfData]);
+
+  if (!merged.length) {
+    return (
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Consensus Accuracy vs Time</span>
+          <span className="card-subtitle">Probability of correct outcome when model matches Polymarket top bucket</span>
+        </div>
+        <div className="empty-state" style={{ height: 180 }}>
+          <p>No consensus data available yet.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <span className="card-title">Consensus Accuracy vs Time</span>
+        <span className="card-subtitle">Probability of correct outcome when model matches Polymarket top bucket</span>
+      </div>
+      <div className="card-body chart-wrap">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={merged} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+            <XAxis dataKey="hours_to_resolve" reversed {...axisProps("bottom")} label={{ value: "Hours to resolve", position: "insideBottom", offset: -5, fill: "var(--text-2)", fontSize: 11 }} />
+            <YAxis {...axisProps()} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+            <Tooltip
+              content={(
+                <ChartTooltip
+                  labelFormatter={(v) => `${v}h to resolve`}
+                  valueFormatter={(v) => (typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "—")}
+                  metaFormatter={(row) => {
+                    const nT = row?.tomorrow_n;
+                    const nE = row?.ecmwf_n;
+                    if (nT != null && nE != null) return `n=${nT} (Tom), n=${nE} (ECM)`;
+                    if (nT != null) return `n=${nT} (Tom)`;
+                    if (nE != null) return `n=${nE} (ECM)`;
+                    return null;
+                  }}
+                />
+              )}
+            />
+            <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-2)" }} />
+            <Line type="monotone" dataKey="tomorrow_hit" stroke={CHART_THEME.tomorrow} dot={false} name="Tomorrow Consensus" strokeWidth={2} />
+            <Line type="monotone" dataKey="ecmwf_hit" stroke={CHART_THEME.ecmwf} dot={false} name="ECMWF Consensus" strokeWidth={2} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 function StrategyCurves({ data, polyRank, onPolyRankChange }) {
   const [curveSeries, setCurveSeries] = useState(() =>
     loadStored(STRATEGY_CURVE_SERIES_LS, STRATEGY_CURVE_SERIES_DEFAULT),
@@ -1138,6 +1207,8 @@ export function App() {
   const [marketsLoading, setMarketsLoading] = useState(true);
   const [health, setHealth] = useState(null);
   const [strategyCurves, setStrategyCurves] = useState([]);
+  const [consensusHitTomorrow, setConsensusHitTomorrow] = useState([]);
+  const [consensusHitEcmwf, setConsensusHitEcmwf] = useState([]);
   const [cityDeviation, setCityDeviation] = useState([]);
   const [calibrationBinPct, setCalibrationBinPct] = useState(() => Number(loadStored("calibrationBinPct", 5)) === 1 ? 1 : 5);
   const [bucketCalibration, setBucketCalibration] = useState(null);
@@ -1187,11 +1258,21 @@ export function App() {
       .catch(console.error);
   }, [polyRank]);
 
+  const fetchConsensusHits = useCallback(() => {
+    apiFetch("/analytics/consensus-hit-vs-time?model=tomorrow")
+      .then(setConsensusHitTomorrow)
+      .catch(console.error);
+    apiFetch("/analytics/consensus-hit-vs-time?model=ecmwf")
+      .then(setConsensusHitEcmwf)
+      .catch(console.error);
+  }, []);
+
   // Initial data load
   useEffect(() => {
     fetchHealth();
     fetchMarkets();
     fetchStrategyCurves();
+    fetchConsensusHits();
     fetchCityDeviation();
     fetchBucketCalibration(calibrationBinPct);
   }, []);
@@ -1202,10 +1283,11 @@ export function App() {
   useEffect(() => {
     if (view === "dashboard") {
       fetchStrategyCurves();
+      fetchConsensusHits();
       fetchCityDeviation();
       fetchBucketCalibration(calibrationBinPct);
     }
-  }, [view, fetchStrategyCurves, fetchCityDeviation, fetchBucketCalibration, calibrationBinPct]);
+  }, [view, fetchStrategyCurves, fetchConsensusHits, fetchCityDeviation, fetchBucketCalibration, calibrationBinPct]);
 
   // Poll health every 30 s
   useInterval(fetchHealth, 30_000);
@@ -1333,11 +1415,17 @@ export function App() {
                   Analytics · Hit probability vs hours to resolution
                 </div>
               </div>
-              <StrategyCurves
-                data={strategyCurves}
-                polyRank={polyRank}
-                onPolyRankChange={setPolyRank}
+              <ConsensusHitRateChart
+                tomorrowData={consensusHitTomorrow}
+                ecmwfData={consensusHitEcmwf}
               />
+              <div style={{ marginTop: 12 }}>
+                <StrategyCurves
+                  data={strategyCurves}
+                  polyRank={polyRank}
+                  onPolyRankChange={setPolyRank}
+                />
+              </div>
               <div style={{ marginTop: 12 }}>
                 <CityForecastDeviationChart data={cityDeviation} />
               </div>

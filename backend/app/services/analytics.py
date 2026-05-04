@@ -195,6 +195,61 @@ def _poly_rank_k_index_price(
     return idx, price
 
 
+def build_consensus_hit_vs_time(
+    rows: list[dict[str, Any]],
+    model: str = "tomorrow"
+) -> list[dict[str, Any]]:
+    """
+    Computes hit probability when the weather model matches Polymarket's top bucket.
+    """
+    agg: dict[int, list[int]] = defaultdict(list)
+    
+    for row in rows:
+        final_idx_raw = row.get("pm_winning_bucket_index")
+        if final_idx_raw is None:
+            continue
+        final_idx = int(final_idx_raw)
+        
+        labels = row.get("bucket_labels_json") or []
+        if not labels:
+            continue
+            
+        t_bucket = int(round(float(row.get("time_to_resolve_hours") or 0)))
+        
+        if model == "tomorrow":
+            temp = row.get("tomorrow_max")
+        elif model == "ecmwf":
+            temp = row.get("ecmwf_max")
+        else:
+            continue
+            
+        if temp is None:
+            continue
+            
+        pred_idx = temp_to_bucket_index(float(temp), labels)
+        poly_idx = row.get("top_bucket_index")
+        
+        if pred_idx is None or poly_idx is None:
+            continue
+            
+        if pred_idx == int(poly_idx):
+            # They agree! Did they get it right?
+            hit = 1 if pred_idx == final_idx else 0
+            agg[t_bucket].append(hit)
+            
+    out: list[dict[str, Any]] = []
+    for bucket_h in sorted(agg.keys(), reverse=True):
+        hits = agg[bucket_h]
+        if not hits:
+            continue
+        out.append({
+            "hours_to_resolve": bucket_h,
+            "samples_count": len(hits),
+            "hit_prob": sum(hits) / len(hits)
+        })
+    return out
+
+
 def build_strategy_curves(
     rows: list[dict[str, Any]],
     poly_rank: int = 1,
