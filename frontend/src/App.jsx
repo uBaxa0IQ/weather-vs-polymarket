@@ -397,7 +397,6 @@ function ConsensusHitRateChart({
   showHourWindowEmptyHint,
   maxHoursCaption,
   curveSeries,
-  onToggleCurveSeries,
 }) {
   const merged = useMemo(() => {
     const map = new Map();
@@ -434,41 +433,9 @@ function ConsensusHitRateChart({
         <span className="card-title">Model–Polymarket consensus hit rate</span>
         <span className="card-subtitle">
           {hasData
-            ? `When forecast bucket = Poly top bucket · ${merged.length} time buckets${maxHPart} · hit = PM final · dashed = Poly Σp · same four toggles as Main bucket (shared state)`
+            ? `When forecast bucket = Poly top bucket · ${merged.length} time buckets${maxHPart} · hit = PM final · dashed = Poly Σp (Tomorrow / ECMWF / Σp toggles above)`
             : `When forecast bucket = Poly top bucket · hit = PM final${maxHPart}`}
         </span>
-      </div>
-      <div style={{ marginBottom: 10, padding: "0 12px" }}>
-        <div className="series-toggle-row" aria-label="Consensus chart series (same as Main bucket hit)">
-          <button
-            type="button"
-            className={`series-toggle${curveSeries.tomorrow ? " active" : ""}`}
-            onClick={() => onToggleCurveSeries("tomorrow")}
-          >
-            Tomorrow
-          </button>
-          <button
-            type="button"
-            className={`series-toggle${curveSeries.ecmwf ? " active" : ""}`}
-            onClick={() => onToggleCurveSeries("ecmwf")}
-          >
-            ECMWF
-          </button>
-          <button
-            type="button"
-            className={`series-toggle${curveSeries.polyTomorrow ? " active" : ""}`}
-            onClick={() => onToggleCurveSeries("polyTomorrow")}
-          >
-            Tomorrow Σp
-          </button>
-          <button
-            type="button"
-            className={`series-toggle${curveSeries.polyEcmwf ? " active" : ""}`}
-            onClick={() => onToggleCurveSeries("polyEcmwf")}
-          >
-            ECMWF Σp
-          </button>
-        </div>
       </div>
       <div className="card-body chart-wrap">
         {!hasData ? (
@@ -1623,7 +1590,6 @@ export function App() {
                   showHourWindowEmptyHint={consensusHourWindowEmpty}
                   maxHoursCaption={chartMaxHoursToResolve}
                   curveSeries={curveSeries}
-                  onToggleCurveSeries={toggleCurveSeries}
                 />
               </div>
               <div style={{ marginTop: 12 }}>
