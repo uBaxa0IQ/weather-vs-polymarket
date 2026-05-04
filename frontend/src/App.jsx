@@ -310,6 +310,7 @@ const CHART_THEME = {
   ecmwf: "#bc8cff",
   poly: "#39d353",
   topBucketValue: "#f2cc60",
+  consensusBoth: "#7ee787",
 };
 const DIST_COLORS = ["#58a6ff", "#bc8cff", "#39d353", "#f2cc60", "#ff7b72", "#8b949e", "#7ee787", "#79c0ff"];
 
@@ -421,12 +422,17 @@ const STRATEGY_CURVE_SERIES_DEFAULT = {
   polyEcmwf: false,
 };
 
+const CONSENSUS_CHART_ONLY_LS = "consensusChartOnly";
+const CONSENSUS_CHART_ONLY_DEFAULT = { bothHit: true, bothSigma: false };
+
 function ConsensusHitRateChart({
   tomorrowData,
   ecmwfData,
+  bothData,
   showHourWindowEmptyHint,
   maxHoursCaption,
   curveSeries,
+  consensusChartOnly,
 }) {
   const merged = useMemo(() => {
     const map = new Map();
@@ -449,9 +455,19 @@ function ConsensusHitRateChart({
       item.ecmwf_poly_mass = d.mean_poly_mass ?? null;
       item.ecmwf_poly_mass_n = d.poly_mass_samples ?? 0;
     }
+    for (const d of bothData || []) {
+      if (!map.has(d.hours_to_resolve)) {
+        map.set(d.hours_to_resolve, { hours_to_resolve: d.hours_to_resolve });
+      }
+      const item = map.get(d.hours_to_resolve);
+      item.both_hit = d.hit_prob;
+      item.both_n = d.samples_count;
+      item.both_poly_mass = d.mean_poly_mass ?? null;
+      item.both_poly_mass_n = d.poly_mass_samples ?? 0;
+    }
     // Same reading as strategy curves: left = more hours to resolve, right → resolution.
     return Array.from(map.values()).sort((a, b) => b.hours_to_resolve - a.hours_to_resolve);
-  }, [tomorrowData, ecmwfData]);
+  }, [tomorrowData, ecmwfData, bothData]);
 
   const hasData = merged.length > 0;
   const maxHPart =
@@ -463,8 +479,8 @@ function ConsensusHitRateChart({
         <span className="card-title">Model–Polymarket consensus hit rate</span>
         <span className="card-subtitle">
           {hasData
-            ? `When forecast bucket = Poly top bucket · ${merged.length} time buckets${maxHPart} · hit = PM final · dashed = Poly Σp (Tomorrow / ECMWF / Σp toggles above)`
-            : `When forecast bucket = Poly top bucket · hit = PM final${maxHPart}`}
+            ? `Poly top vs model buckets · ${merged.length} time buckets${maxHPart} · Both = T+E agree with Poly · dashed = Σp · row above (Both / Both Σp = this chart only)`
+            : `Poly top vs model buckets · Both = T+E agree with Poly${maxHPart}`}
         </span>
       </div>
       <div className="card-body chart-wrap">
@@ -496,6 +512,10 @@ function ConsensusHitRateChart({
                       }
                       if (curveSeries.polyEcmwf && row?.ecmwf_poly_mass_n > 0) {
                         parts.push(`ECMWF Σp n=${row.ecmwf_poly_mass_n}`);
+                      }
+                      if (consensusChartOnly.bothHit && row?.both_n != null) parts.push(`Both n=${row.both_n}`);
+                      if (consensusChartOnly.bothSigma && row?.both_poly_mass_n > 0) {
+                        parts.push(`Both Σp n=${row.both_poly_mass_n}`);
                       }
                       return parts.length ? parts.join(" · ") : null;
                     }}
@@ -549,6 +569,30 @@ function ConsensusHitRateChart({
                   connectNulls={false}
                 />
               )}
+              {consensusChartOnly.bothHit && (
+                <Line
+                  type="monotone"
+                  dataKey="both_hit"
+                  stroke={CHART_THEME.consensusBoth}
+                  dot={false}
+                  name="Both → Poly"
+                  strokeWidth={2.2}
+                  connectNulls={false}
+                />
+              )}
+              {consensusChartOnly.bothSigma && (
+                <Line
+                  type="monotone"
+                  dataKey="both_poly_mass"
+                  stroke={CHART_THEME.consensusBoth}
+                  dot={false}
+                  name="Both Σp"
+                  strokeWidth={1.6}
+                  strokeDasharray="6 4"
+                  strokeOpacity={0.9}
+                  connectNulls={false}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -566,6 +610,8 @@ function StrategyCurves({
   unfilteredRowCount,
   curveSeries,
   onToggleCurveSeries,
+  consensusChartOnly,
+  onToggleConsensusChartOnly,
 }) {
   const mergedPolyData = useMemo(() => {
     if (!Array.isArray(data) || !data.length) return [];
@@ -648,6 +694,26 @@ function StrategyCurves({
           >
             ECMWF Σp
           </button>
+          <div
+            style={{ display: "inline-flex", gap: 4, marginLeft: 10 }}
+            aria-label="Consensus chart only"
+            title="These toggles apply only to the Model–Polymarket consensus chart below"
+          >
+            <button
+              type="button"
+              className={`series-toggle${consensusChartOnly.bothHit ? " active" : ""}`}
+              onClick={() => onToggleConsensusChartOnly("bothHit")}
+            >
+              Both
+            </button>
+            <button
+              type="button"
+              className={`series-toggle${consensusChartOnly.bothSigma ? " active" : ""}`}
+              onClick={() => onToggleConsensusChartOnly("bothSigma")}
+            >
+              Both Σp
+            </button>
+          </div>
           <div style={{ display: "inline-flex", gap: 4, marginLeft: 10 }} aria-label="Polymarket price rank (merge chart)">
             {[1, 2, 3, 4, 5].map((rk) => (
               <button
@@ -1363,6 +1429,7 @@ export function App() {
   const [strategyCurves, setStrategyCurves] = useState([]);
   const [consensusHitTomorrow, setConsensusHitTomorrow] = useState([]);
   const [consensusHitEcmwf, setConsensusHitEcmwf] = useState([]);
+  const [consensusHitBoth, setConsensusHitBoth] = useState([]);
   const [cityDeviation, setCityDeviation] = useState([]);
   const [calibrationBinPct, setCalibrationBinPct] = useState(() => Number(loadStored("calibrationBinPct", 5)) === 1 ? 1 : 5);
   const [bucketCalibration, setBucketCalibration] = useState(null);
@@ -1383,9 +1450,16 @@ export function App() {
   const [curveSeries, setCurveSeries] = useState(() =>
     loadStored(STRATEGY_CURVE_SERIES_LS, STRATEGY_CURVE_SERIES_DEFAULT),
   );
+  const [consensusChartOnly, setConsensusChartOnly] = useState(() =>
+    loadStored(CONSENSUS_CHART_ONLY_LS, CONSENSUS_CHART_ONLY_DEFAULT),
+  );
 
   const toggleCurveSeries = useCallback((key) => {
     setCurveSeries((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
+  const toggleConsensusChartOnly = useCallback((key) => {
+    setConsensusChartOnly((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
   const fetchHealth = useCallback(() => {
@@ -1420,6 +1494,7 @@ export function App() {
   useEffect(() => { saveStored(POLY_RANK_LS, polyRank); }, [polyRank]);
   useEffect(() => { saveStored(CHART_MAX_HOURS_LS, chartMaxHoursToResolve); }, [chartMaxHoursToResolve]);
   useEffect(() => { saveStored(STRATEGY_CURVE_SERIES_LS, curveSeries); }, [curveSeries]);
+  useEffect(() => { saveStored(CONSENSUS_CHART_ONLY_LS, consensusChartOnly); }, [consensusChartOnly]);
 
   const fetchStrategyCurves = useCallback(() => {
     apiFetch(`/analytics/strategy-curves?poly_rank=${polyRank}`)
@@ -1433,6 +1508,9 @@ export function App() {
       .catch(console.error);
     apiFetch("/analytics/consensus-hit-vs-time?model=ecmwf")
       .then(setConsensusHitEcmwf)
+      .catch(console.error);
+    apiFetch("/analytics/consensus-hit-vs-time?model=both")
+      .then(setConsensusHitBoth)
       .catch(console.error);
   }, []);
 
@@ -1480,12 +1558,19 @@ export function App() {
     () => filterByMaxHoursToResolve(consensusHitEcmwf, chartMaxHoursToResolve),
     [consensusHitEcmwf, chartMaxHoursToResolve],
   );
+  const consensusBothFiltered = useMemo(
+    () => filterByMaxHoursToResolve(consensusHitBoth, chartMaxHoursToResolve),
+    [consensusHitBoth, chartMaxHoursToResolve],
+  );
   const consensusHourWindowEmpty =
     chartMaxHoursToResolve != null &&
     chartMaxHoursToResolve > 0 &&
-    ((consensusHitTomorrow?.length ?? 0) > 0 || (consensusHitEcmwf?.length ?? 0) > 0) &&
+    ((consensusHitTomorrow?.length ?? 0) > 0
+      || (consensusHitEcmwf?.length ?? 0) > 0
+      || (consensusHitBoth?.length ?? 0) > 0) &&
     consensusTomorrowFiltered.length === 0 &&
-    consensusEcmwfFiltered.length === 0;
+    consensusEcmwfFiltered.length === 0 &&
+    consensusBothFiltered.length === 0;
 
   const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
@@ -1612,14 +1697,18 @@ export function App() {
                 unfilteredRowCount={strategyCurves.length}
                 curveSeries={curveSeries}
                 onToggleCurveSeries={toggleCurveSeries}
+                consensusChartOnly={consensusChartOnly}
+                onToggleConsensusChartOnly={toggleConsensusChartOnly}
               />
               <div style={{ marginTop: 12 }}>
                 <ConsensusHitRateChart
                   tomorrowData={consensusTomorrowFiltered}
                   ecmwfData={consensusEcmwfFiltered}
+                  bothData={consensusBothFiltered}
                   showHourWindowEmptyHint={consensusHourWindowEmpty}
                   maxHoursCaption={chartMaxHoursToResolve}
                   curveSeries={curveSeries}
+                  consensusChartOnly={consensusChartOnly}
                 />
               </div>
               <div style={{ marginTop: 12 }}>

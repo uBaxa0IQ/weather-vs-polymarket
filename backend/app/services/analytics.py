@@ -200,8 +200,9 @@ def build_consensus_hit_vs_time(
     model: str = "tomorrow"
 ) -> list[dict[str, Any]]:
     """
-    When the weather model bucket matches Polymarket's top bucket:
-    hit rate vs PM final, and mean normalized Poly mass (Σp) on that bucket.
+    Hit rate vs PM final and mean Poly Σp on the agreed bucket when:
+    - tomorrow / ecmwf: that model's bucket == Poly top bucket;
+    - both: Tomorrow and ECMWF buckets both == Poly top bucket (same snapshot).
     """
     agg: dict[int, dict[str, list[Any]]] = defaultdict(lambda: {"hits": [], "poly_mass": []})
 
@@ -217,30 +218,47 @@ def build_consensus_hit_vs_time(
 
         t_bucket = int(round(float(row.get("time_to_resolve_hours") or 0)))
 
+        poly_idx = row.get("top_bucket_index")
+        if poly_idx is None:
+            continue
+        pi = int(poly_idx)
+
+        pred_idx: int | None = None
         if model == "tomorrow":
             temp = row.get("tomorrow_max")
+            if temp is None:
+                continue
+            pred_idx = temp_to_bucket_index(float(temp), labels)
         elif model == "ecmwf":
             temp = row.get("ecmwf_max")
+            if temp is None:
+                continue
+            pred_idx = temp_to_bucket_index(float(temp), labels)
+        elif model == "both":
+            temp_t = row.get("tomorrow_max")
+            temp_e = row.get("ecmwf_max")
+            if temp_t is None or temp_e is None:
+                continue
+            t_idx = temp_to_bucket_index(float(temp_t), labels)
+            e_idx = temp_to_bucket_index(float(temp_e), labels)
+            if t_idx is None or e_idx is None:
+                continue
+            if t_idx != pi or e_idx != pi:
+                continue
+            pred_idx = t_idx
         else:
             continue
 
-        if temp is None:
+        if pred_idx is None or pred_idx != pi:
             continue
 
-        pred_idx = temp_to_bucket_index(float(temp), labels)
-        poly_idx = row.get("top_bucket_index")
-
-        if pred_idx is None or poly_idx is None:
-            continue
-
-        if pred_idx == int(poly_idx):
-            cell = agg[t_bucket]
-            hit = 1 if pred_idx == final_idx else 0
-            cell["hits"].append(hit)
-            norm = _normalized_bucket_probs(row.get("bucket_prices_json"))
-            mass = _poly_mass_on_indices(norm, [pred_idx]) if norm is not None else None
-            if mass is not None:
-                cell["poly_mass"].append(float(mass))
+        cell = agg[t_bucket]
+        hit = 1 if pred_idx == final_idx else 0
+        cell["hits"].append(hit)
+        norm = _normalized_bucket_probs(row.get("bucket_prices_json"))
+        mass = _poly_mass_on_indices(norm, [pred_idx]) if norm is not None else None
+        if mass is not None:
+            cell["poly_mass"].append(float(mass))
 
     out: list[dict[str, Any]] = []
     for bucket_h in sorted(agg.keys(), reverse=True):

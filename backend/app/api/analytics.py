@@ -28,7 +28,7 @@ async def probability_hit_vs_time(
 
 @router.get("/consensus-hit-vs-time")
 async def consensus_hit_vs_time(
-    model: Annotated[str, Query(pattern="^(tomorrow|ecmwf)$")] = "tomorrow",
+    model: Annotated[str, Query(pattern="^(tomorrow|ecmwf|both)$")] = "tomorrow",
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     rows = await analytics_repo.get_strategy_curve_rows(session)
