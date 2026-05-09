@@ -46,8 +46,8 @@ async def search_markets(
     date_from: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
     date_to: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
     resolve_within_hours: Annotated[float | None, Query(ge=0, le=8760)] = None,
-    yes_price_min: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
-    yes_price_max: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
+    prob_min: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
+    prob_max: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     page: Annotated[int, Query(ge=0)] = 0,
     page_size: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> dict:
@@ -56,8 +56,8 @@ async def search_markets(
         date_from=date_from,
         date_to=date_to,
         resolve_within_hours=resolve_within_hours,
-        yes_price_min=yes_price_min,
-        yes_price_max=yes_price_max,
+        prob_min=prob_min,
+        prob_max=prob_max,
         page=page,
         page_size=page_size,
     )

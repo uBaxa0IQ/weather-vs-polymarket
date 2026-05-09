@@ -134,8 +134,8 @@ async def get_wallet_balance() -> dict:
 
 async def _fetch_event_buckets(
     evt_meta: dict,
-    yes_price_min: float | None,
-    yes_price_max: float | None,
+    prob_min: float | None,
+    prob_max: float | None,
 ) -> dict | None:
     event_slug = evt_meta["event_slug"]
     target_date = date.fromisoformat(evt_meta["target_date"])
@@ -175,10 +175,12 @@ async def _fetch_event_buckets(
 
         if yes_price is not None:
             yes_price = max(0.001, min(0.999, yes_price))
-            if yes_price_min is not None and yes_price < yes_price_min:
-                continue
-            if yes_price_max is not None and yes_price > yes_price_max:
-                continue
+            no_price_val = 1.0 - yes_price
+            yes_in_range = (prob_min is None or yes_price >= prob_min) and (prob_max is None or yes_price <= prob_max)
+            no_in_range = (prob_min is None or no_price_val >= prob_min) and (prob_max is None or no_price_val <= prob_max)
+            if prob_min is not None or prob_max is not None:
+                if not (yes_in_range or no_in_range):
+                    continue
 
         yes_token_id, no_token_id = _parse_clob_token_ids(m)
         condition_id = str(m.get("conditionId") or "")
@@ -204,8 +206,8 @@ async def search_markets(
     date_from: str | None = None,
     date_to: str | None = None,
     resolve_within_hours: float | None = None,
-    yes_price_min: float | None = None,
-    yes_price_max: float | None = None,
+    prob_min: float | None = None,
+    prob_max: float | None = None,
     page: int = 0,
     page_size: int = 20,
 ) -> dict:
@@ -307,7 +309,7 @@ async def search_markets(
     BATCH = 8
     for i in range(0, len(fetch_slice), BATCH):
         batch = fetch_slice[i : i + BATCH]
-        tasks = [_fetch_event_buckets(e, yes_price_min, yes_price_max) for e in batch]
+        tasks = [_fetch_event_buckets(e, prob_min, prob_max) for e in batch]
         batch_res = await asyncio.gather(*tasks)
         for r in batch_res:
             if r is not None:
