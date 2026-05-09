@@ -63,11 +63,43 @@ function saveStored(key, value) {
   }
 }
 
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+const AUTH_TOKEN_KEY = "weather-vsp:auth-token";
+
+function getAuthToken() {
+  try { return localStorage.getItem(AUTH_TOKEN_KEY); } catch { return null; }
+}
+function setAuthToken(token) {
+  try { localStorage.setItem(AUTH_TOKEN_KEY, token); } catch { /* ignore */ }
+}
+function clearAuthToken() {
+  try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch { /* ignore */ }
+}
+
 // ─── HTTP helpers ────────────────────────────────────────────────────────────
 
 async function apiFetch(path, options) {
   const res = await fetch(`${API_BASE}${path}`, options);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+async function authFetch(path, options = {}) {
+  const token = getAuthToken();
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (res.status === 401) {
+    clearAuthToken();
+    window.location.reload();
+    throw new Error("Session expired");
+  }
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try { const j = await res.json(); detail = j.detail || detail; } catch { /* ignore */ }
+    throw new Error(detail);
+  }
   return res.json();
 }
 
@@ -1420,9 +1452,692 @@ function MarketDetail({ slug, market }) {
   );
 }
 
+// ─── Login screen ────────────────────────────────────────────────────────────
+
+function LoginScreen({ onLogin }) {
+  const [pw, setPw] = useState("");
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiFetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      });
+      setAuthToken(data.token);
+      onLogin(data.token);
+    } catch (err) {
+      setError(err.message || "Invalid password");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="login-overlay">
+      <div className="login-card">
+        <div className="login-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/>
+          </svg>
+        </div>
+        <h1 className="login-title">Weather Market Analyzer</h1>
+        <form onSubmit={handleSubmit} className="login-form">
+          <input
+            type="password"
+            className="login-input"
+            placeholder="Password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            autoFocus
+          />
+          {error && <div className="login-error">{error}</div>}
+          <button type="submit" className="login-btn" disabled={loading || !pw}>
+            {loading ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Trading tab ──────────────────────────────────────────────────────────────
+
+function pct(v) {
+  if (v == null) return "—";
+  return `${(v * 100).toFixed(1)}¢`;
+}
+
+function TradingConfirmModal({ pool, allocation, balance, execEnabled, onConfirm, onClose, loading, result }) {
+  const n = pool.length;
+  const amountEach = allocation.type === "pct"
+    ? Math.round((balance * (allocation.value / 100) / n) * 100) / 100
+    : Math.round(allocation.value * 100) / 100;
+  const total = Math.round(amountEach * n * 100) / 100;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-title">Confirm Bets</span>
+          <button className="icon-btn" onClick={onClose}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <div className="modal-mode-badge" style={{ background: execEnabled ? "rgba(248,81,73,0.12)" : "rgba(210,153,34,0.12)", color: execEnabled ? "var(--red)" : "var(--amber)" }}>
+          {execEnabled ? "LIVE — real orders will be placed" : "DRY RUN — paper trading only"}
+        </div>
+
+        <div className="modal-bets-list">
+          {pool.map((item) => (
+            <div key={`${item.event_slug}-${item.bucket_label}-${item.side}`} className="modal-bet-row">
+              <span className="modal-bet-market">{item.market_title}</span>
+              <div className="modal-bet-detail">
+                <span className={`side-badge side-badge--${item.side}`}>{item.side.toUpperCase()}</span>
+                <span className="modal-bet-label">{item.bucket_label}</span>
+                <span className="modal-bet-price">@ {(item.theoretical_price * 100).toFixed(1)}¢</span>
+                <span className="modal-bet-amount">${amountEach.toFixed(2)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="modal-summary">
+          <span>Total: <strong>${total.toFixed(2)}</strong></span>
+          <span>Balance: <strong>${balance.toFixed(2)}</strong></span>
+          <span>After: <strong>${Math.max(0, balance - total).toFixed(2)}</strong></span>
+        </div>
+
+        {result && (
+          <div className="modal-result">
+            {result.map((r, i) => (
+              <div key={i} className={`modal-result-row ${r.error ? "modal-result-row--err" : ""}`}>
+                {r.error ? `${r.bucket_label}: ${r.error}` : `${r.bucket_label} ${r.side.toUpperCase()} — ${r.status}`}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="modal-actions">
+          <button className="btn btn-ghost" onClick={onClose}>{result ? "Close" : "Cancel"}</button>
+          {!result && (
+            <button className="btn btn-primary" onClick={onConfirm} disabled={loading}>
+              {loading ? "Placing…" : "Confirm & Place"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TradingTab() {
+  // Filters
+  const [city, setCity] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [resolveHours, setResolveHours] = useState("");
+  const [yesMin, setYesMin] = useState("");
+  const [yesMax, setYesMax] = useState("");
+  const [page, setPage] = useState(0);
+
+  // Search results
+  const [results, setResults] = useState(null);
+  const [totalMeta, setTotalMeta] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [expandedSlug, setExpandedSlug] = useState(null);
+
+  // Pool
+  const [pool, setPool] = useState([]);
+
+  // Allocation
+  const [allocType, setAllocType] = useState("pct"); // "pct" | "fixed"
+  const [allocValue, setAllocValue] = useState("10");
+
+  // Balance
+  const [balance, setBalance] = useState(null);
+  const [balanceError, setBalanceError] = useState(null);
+
+  // Settings
+  const [execEnabled, setExecEnabled] = useState(false);
+
+  // Modal
+  const [showModal, setShowModal] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const [placeResult, setPlaceResult] = useState(null);
+
+  useEffect(() => {
+    authFetch("/trading/wallet").then((d) => {
+      setBalance(d.available_usd ?? 0);
+      if (d.error) setBalanceError(d.error);
+    }).catch((e) => setBalanceError(e.message));
+    authFetch("/trading/settings").then((d) => {
+      setExecEnabled(d["betting.execution_enabled"] === "true");
+    }).catch(console.error);
+  }, []);
+
+  const [execToggling, setExecToggling] = useState(false);
+
+  async function toggleExecEnabled() {
+    const next = !execEnabled;
+    if (next && !window.confirm(
+      "Switch to LIVE mode?\n\nReal orders will be placed on Polymarket. Make sure your wallet is funded and credentials are correct."
+    )) return;
+
+    setExecToggling(true);
+    try {
+      await authFetch("/trading/settings", {
+        method: "PUT",
+        body: JSON.stringify({ key: "betting.execution_enabled", value: next ? "true" : "false" }),
+      });
+      setExecEnabled(next);
+    } catch (e) {
+      alert(`Failed to update setting: ${e.message}`);
+    } finally {
+      setExecToggling(false);
+    }
+  }
+
+  async function doSearch(p = 0) {
+    setSearching(true);
+    setSearchError(null);
+    setPage(p);
+    const params = new URLSearchParams({ page: String(p), page_size: "20" });
+    if (city.trim()) params.set("city", city.trim());
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    if (resolveHours) params.set("resolve_within_hours", resolveHours);
+    if (yesMin) params.set("yes_price_min", (parseFloat(yesMin) / 100).toFixed(3));
+    if (yesMax) params.set("yes_price_max", (parseFloat(yesMax) / 100).toFixed(3));
+    try {
+      const d = await authFetch(`/trading/search?${params}`);
+      setResults(d.results);
+      setTotalMeta(d.total);
+    } catch (e) {
+      setSearchError(e.message);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function addToPool(market, bucket, side) {
+    const tokenId = side === "yes" ? bucket.yes_token_id : bucket.no_token_id;
+    const price = side === "yes" ? bucket.yes_price : bucket.no_price;
+    const key = `${market.event_slug}|${bucket.label}|${side}`;
+    setPool((prev) => {
+      const exists = prev.find((p) => p._key === key);
+      if (exists) return prev;
+      return [...prev, {
+        _key: key,
+        token_id: tokenId,
+        condition_id: bucket.condition_id,
+        side,
+        bucket_label: bucket.label,
+        market_title: market.title,
+        event_slug: market.event_slug,
+        theoretical_price: price ?? 0.5,
+        snapshot_json: {
+          bucket_labels: market.buckets?.map((b) => b.label) ?? [],
+          bucket_yes_prices: market.buckets?.map((b) => b.yes_price) ?? [],
+          city_slug: market.city_slug,
+          target_date: market.target_date,
+        },
+      }];
+    });
+  }
+
+  function removeFromPool(key) {
+    setPool((prev) => prev.filter((p) => p._key !== key));
+  }
+
+  const inPool = (eventSlug, label, side) =>
+    pool.some((p) => p._key === `${eventSlug}|${label}|${side}`);
+
+  async function handlePlace() {
+    if (pool.length === 0) return;
+    setPlacing(true);
+    setPlaceResult(null);
+    const balVal = balance ?? 0;
+    const body = {
+      pool: pool.map(({ _key: _k, ...rest }) => rest),
+      balance_usd: balVal,
+      ...(allocType === "pct"
+        ? { allocation_pct: parseFloat(allocValue) || 0 }
+        : { allocation_fixed: parseFloat(allocValue) || 0 }),
+    };
+    try {
+      const res = await authFetch("/trading/bets", { method: "POST", body: JSON.stringify(body) });
+      setPlaceResult(res);
+      // Refresh balance
+      authFetch("/trading/wallet").then((d) => setBalance(d.available_usd ?? 0)).catch(() => {});
+    } catch (e) {
+      setPlaceResult([{ error: e.message, bucket_label: "all", side: "", status: "failed" }]);
+    } finally {
+      setPlacing(false);
+    }
+  }
+
+  const allocation = { type: allocType, value: parseFloat(allocValue) || 0 };
+  const n = pool.length;
+  const amountEach = n > 0
+    ? (allocType === "pct"
+      ? Math.round(((balance ?? 0) * allocation.value / 100 / n) * 100) / 100
+      : Math.round(allocation.value * 100) / 100)
+    : 0;
+  const totalBet = Math.round(amountEach * n * 100) / 100;
+
+  return (
+    <div className="trading-tab">
+      {/* ── Filters ── */}
+      <div className="trading-filters card">
+        <div className="section-label" style={{ marginBottom: 10 }}>Market Search</div>
+        <div className="filter-grid">
+          <div className="filter-field">
+            <label className="filter-label">City</label>
+            <input className="text-input" placeholder="london, munich…" value={city} onChange={(e) => setCity(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doSearch(0)} />
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">Date from</label>
+            <input className="text-input" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">Date to</label>
+            <input className="text-input" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">Resolve within (h)</label>
+            <input className="text-input" type="number" min="0" placeholder="48" value={resolveHours} onChange={(e) => setResolveHours(e.target.value)} />
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">YES price min (¢)</label>
+            <input className="text-input" type="number" min="0" max="100" placeholder="30" value={yesMin} onChange={(e) => setYesMin(e.target.value)} />
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">YES price max (¢)</label>
+            <input className="text-input" type="number" min="0" max="100" placeholder="70" value={yesMax} onChange={(e) => setYesMax(e.target.value)} />
+          </div>
+        </div>
+        <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn btn-primary" onClick={() => doSearch(0)} disabled={searching}>
+            {searching ? "Searching…" : "Search"}
+          </button>
+          {searchError && <span style={{ color: "var(--red)", fontSize: 12 }}>{searchError}</span>}
+          {results !== null && !searching && (
+            <span style={{ color: "var(--text-2)", fontSize: 12 }}>
+              {totalMeta} events matched · showing {results.length}
+            </span>
+          )}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, color: "var(--text-2)" }}>Execution:</span>
+            <button
+              className={`exec-toggle ${execEnabled ? "exec-toggle--live" : "exec-toggle--dry"}`}
+              onClick={toggleExecEnabled}
+              disabled={execToggling}
+              title={execEnabled ? "Click to switch to Dry Run" : "Click to switch to Live trading"}
+            >
+              {execToggling ? "…" : execEnabled ? "LIVE" : "Dry Run"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Results ── */}
+      {results !== null && (
+        <div className="trading-results card">
+          <div className="section-label" style={{ marginBottom: 10 }}>Results</div>
+          {results.length === 0 ? (
+            <div className="empty-state" style={{ padding: 24 }}>No markets match the filters</div>
+          ) : (
+            <>
+              {results.map((mkt) => (
+                <div key={mkt.event_slug} className="result-market">
+                  <button
+                    className="result-market-header"
+                    onClick={() => setExpandedSlug(expandedSlug === mkt.event_slug ? null : mkt.event_slug)}
+                  >
+                    <span className="result-market-chevron">{expandedSlug === mkt.event_slug ? "▼" : "▶"}</span>
+                    <span className="result-market-title">{mkt.title}</span>
+                    <span className="result-market-meta">
+                      <span className="tag">{mkt.city_slug}</span>
+                      <span className="tag">{mkt.target_date}</span>
+                      <span className="tag" style={{ color: mkt.hours_to_resolve < 24 ? "var(--amber)" : "var(--text-2)" }}>
+                        {mkt.hours_to_resolve > 0 ? `${mkt.hours_to_resolve}h` : "expired"}
+                      </span>
+                      <span className="tag">{mkt.buckets?.length ?? 0} buckets</span>
+                    </span>
+                  </button>
+
+                  {expandedSlug === mkt.event_slug && (
+                    <div className="result-buckets">
+                      {(mkt.buckets ?? []).map((bucket) => (
+                        <div key={bucket.label} className="result-bucket-row">
+                          <span className="bucket-label-text">{bucket.label}</span>
+                          <span className="bucket-price-yes">YES {bucket.yes_price != null ? `${(bucket.yes_price * 100).toFixed(1)}¢` : "—"}</span>
+                          <span className="bucket-price-no">NO {bucket.no_price != null ? `${(bucket.no_price * 100).toFixed(1)}¢` : "—"}</span>
+                          {!bucket.enable_order_book && <span style={{ color: "var(--text-3)", fontSize: 11 }}>no book</span>}
+                          <div className="bucket-actions">
+                            <button
+                              className={`btn-side ${inPool(mkt.event_slug, bucket.label, "yes") ? "btn-side--active-yes" : "btn-side--yes"}`}
+                              disabled={!bucket.yes_token_id}
+                              onClick={() => inPool(mkt.event_slug, bucket.label, "yes")
+                                ? removeFromPool(`${mkt.event_slug}|${bucket.label}|yes`)
+                                : addToPool(mkt, bucket, "yes")}
+                            >
+                              {inPool(mkt.event_slug, bucket.label, "yes") ? "YES" : "+ YES"}
+                            </button>
+                            <button
+                              className={`btn-side ${inPool(mkt.event_slug, bucket.label, "no") ? "btn-side--active-no" : "btn-side--no"}`}
+                              disabled={!bucket.no_token_id}
+                              onClick={() => inPool(mkt.event_slug, bucket.label, "no")
+                                ? removeFromPool(`${mkt.event_slug}|${bucket.label}|no`)
+                                : addToPool(mkt, bucket, "no")}
+                            >
+                              {inPool(mkt.event_slug, bucket.label, "no") ? "NO" : "+ NO"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              <div className="pagination-row">
+                <button className="btn btn-ghost" disabled={page === 0 || searching} onClick={() => doSearch(page - 1)}>← Prev</button>
+                <span style={{ color: "var(--text-2)", fontSize: 12 }}>Page {page + 1}</span>
+                <button className="btn btn-ghost" disabled={results.length < 20 || searching} onClick={() => doSearch(page + 1)}>Next →</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Pool ── */}
+      {pool.length > 0 && (
+        <div className="trading-pool card">
+          <div className="pool-header">
+            <span className="section-label">Pool · {pool.length} bet{pool.length !== 1 ? "s" : ""}</span>
+            <button className="btn btn-ghost" style={{ fontSize: 11 }} onClick={() => setPool([])}>Clear all</button>
+          </div>
+
+          <div className="pool-bets">
+            {pool.map((item) => (
+              <div key={item._key} className="pool-bet-row">
+                <div className="pool-bet-main">
+                  <span className={`side-badge side-badge--${item.side}`}>{item.side.toUpperCase()}</span>
+                  <span className="pool-bet-label">{item.bucket_label}</span>
+                  <span className="pool-bet-price">@ {(item.theoretical_price * 100).toFixed(1)}¢</span>
+                  <span className="pool-bet-market">{item.market_title}</span>
+                </div>
+                <button className="icon-btn" onClick={() => removeFromPool(item._key)}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 6 6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="pool-controls">
+            <div className="pool-alloc">
+              <div className="alloc-type-toggle">
+                <button
+                  className={`alloc-btn ${allocType === "pct" ? "alloc-btn--active" : ""}`}
+                  onClick={() => setAllocType("pct")}
+                >% of balance</button>
+                <button
+                  className={`alloc-btn ${allocType === "fixed" ? "alloc-btn--active" : ""}`}
+                  onClick={() => setAllocType("fixed")}
+                >Fixed $</button>
+              </div>
+              <input
+                className="text-input"
+                type="number"
+                min="0"
+                step={allocType === "pct" ? "1" : "1"}
+                value={allocValue}
+                onChange={(e) => setAllocValue(e.target.value)}
+                style={{ width: 80 }}
+              />
+              <span style={{ color: "var(--text-2)", fontSize: 12 }}>
+                {allocType === "pct" ? `${allocValue}%` : "$"}
+              </span>
+            </div>
+
+            <div className="pool-summary">
+              <span>Balance: <strong>${(balance ?? 0).toFixed(2)}</strong></span>
+              <span>Per bet: <strong>${amountEach.toFixed(2)}</strong></span>
+              <span>Total: <strong>${totalBet.toFixed(2)}</strong></span>
+              <button
+                className={`exec-toggle ${execEnabled ? "exec-toggle--live" : "exec-toggle--dry"}`}
+                onClick={toggleExecEnabled}
+                disabled={execToggling}
+                style={{ fontSize: 11 }}
+              >
+                {execToggling ? "…" : execEnabled ? "LIVE" : "Dry Run"}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+            <button
+              className="btn btn-primary"
+              disabled={pool.length === 0 || amountEach <= 0}
+              onClick={() => { setPlaceResult(null); setShowModal(true); }}
+            >
+              Place Bets →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showModal && (
+        <TradingConfirmModal
+          pool={pool}
+          allocation={allocation}
+          balance={balance ?? 0}
+          execEnabled={execEnabled}
+          loading={placing}
+          result={placeResult}
+          onConfirm={handlePlace}
+          onClose={() => {
+            setShowModal(false);
+            if (placeResult) {
+              const allOk = placeResult.every((r) => !r.error);
+              if (allOk) setPool([]);
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Bet stats tab ────────────────────────────────────────────────────────────
+
+function BetStatusBadge({ status }) {
+  const colors = {
+    won: "var(--green)",
+    lost: "var(--red)",
+    pending: "var(--blue)",
+    filled: "var(--blue)",
+    dry_run: "var(--amber)",
+    failed: "var(--text-3)",
+    cancelled: "var(--text-3)",
+  };
+  return (
+    <span style={{
+      display: "inline-block",
+      padding: "1px 7px",
+      borderRadius: 10,
+      fontSize: 11,
+      fontWeight: 600,
+      background: `${colors[status] ?? "var(--text-3)"}22`,
+      color: colors[status] ?? "var(--text-3)",
+    }}>
+      {status.replace("_", " ")}
+    </span>
+  );
+}
+
+function BetStatsTab() {
+  const [stats, setStats] = useState(null);
+  const [bets, setBets] = useState([]);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ limit: "200" });
+      if (statusFilter) params.set("status", statusFilter);
+      const [s, b] = await Promise.all([
+        authFetch("/trading/bets/stats"),
+        authFetch(`/trading/bets?${params}`),
+      ]);
+      setStats(s);
+      setBets(b);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const statuses = ["", "won", "lost", "pending", "dry_run", "failed", "cancelled"];
+
+  return (
+    <div className="betstats-tab">
+      {/* ── Summary cards ── */}
+      {stats && (
+        <div className="stats-cards">
+          <div className="stat-card">
+            <div className="stat-label">Total Bets</div>
+            <div className="stat-value">{stats.total}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Won</div>
+            <div className="stat-value" style={{ color: "var(--green)" }}>{stats.won}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Lost</div>
+            <div className="stat-value" style={{ color: "var(--red)" }}>{stats.lost}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Pending</div>
+            <div className="stat-value" style={{ color: "var(--blue)" }}>{stats.pending}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Win Rate</div>
+            <div className="stat-value">{stats.win_rate_pct != null ? `${stats.win_rate_pct}%` : "—"}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Total Wagered</div>
+            <div className="stat-value">${stats.total_wagered?.toFixed(2) ?? "0.00"}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Total P&amp;L</div>
+            <div className="stat-value" style={{ color: stats.total_pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+              {stats.total_pnl >= 0 ? "+" : ""}{stats.total_pnl?.toFixed(2) ?? "0.00"}
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">ROI</div>
+            <div className="stat-value" style={{ color: (stats.roi_pct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+              {stats.roi_pct != null ? `${stats.roi_pct >= 0 ? "+" : ""}${stats.roi_pct}%` : "—"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Filters + table ── */}
+      <div className="card" style={{ marginTop: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <span className="section-label">Bet History</span>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {statuses.map((s) => (
+              <button
+                key={s || "all"}
+                className={`tag-btn ${statusFilter === s ? "tag-btn--active" : ""}`}
+                onClick={() => setStatusFilter(s)}
+              >
+                {s || "All"}
+              </button>
+            ))}
+          </div>
+          <button className="btn btn-ghost" style={{ marginLeft: "auto", fontSize: 11 }} onClick={fetchData}>↻ Refresh</button>
+        </div>
+
+        {error && <div style={{ color: "var(--red)", marginBottom: 8, fontSize: 12 }}>{error}</div>}
+
+        {loading ? (
+          <div style={{ padding: 16 }}>
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="skeleton" style={{ height: 36, marginBottom: 6, borderRadius: 4 }} />
+            ))}
+          </div>
+        ) : bets.length === 0 ? (
+          <div className="empty-state" style={{ padding: 32 }}>No bets yet</div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Market</th>
+                  <th>Bucket</th>
+                  <th>Side</th>
+                  <th>Amount</th>
+                  <th>Price</th>
+                  <th>Status</th>
+                  <th>P&amp;L</th>
+                  <th>Placed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bets.map((bet) => (
+                  <tr key={bet.id}>
+                    <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={bet.market_title}>{bet.market_title}</td>
+                    <td style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{bet.bucket_label}</td>
+                    <td>
+                      <span className={`side-badge side-badge--${bet.side}`}>{bet.side.toUpperCase()}</span>
+                    </td>
+                    <td className="td-num">${bet.amount_usd?.toFixed(2)}</td>
+                    <td className="td-num">{bet.actual_price != null ? `${(bet.actual_price * 100).toFixed(1)}¢` : `${(bet.theoretical_price * 100).toFixed(1)}¢`}</td>
+                    <td><BetStatusBadge status={bet.status} /></td>
+                    <td className="td-num" style={{ color: bet.pnl == null ? "var(--text-3)" : bet.pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                      {bet.pnl != null ? `${bet.pnl >= 0 ? "+" : ""}${bet.pnl.toFixed(2)}` : "—"}
+                    </td>
+                    <td className="td-time">{fmtDateTime(bet.placed_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Root app ─────────────────────────────────────────────────────────────────
 
 export function App() {
+  // Auth
+  const [token, setToken] = useState(() => getAuthToken());
+
   const [markets, setMarkets] = useState([]);
   const [marketsLoading, setMarketsLoading] = useState(true);
   const [health, setHealth] = useState(null);
@@ -1574,6 +2289,10 @@ export function App() {
 
   const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
+  if (!token) {
+    return <LoginScreen onLogin={(t) => setToken(t)} />;
+  }
+
   return (
     <div className="app-shell">
       {/* ── Header ── */}
@@ -1590,6 +2309,14 @@ export function App() {
             <span className="live-dot" />
             Live
           </span>
+          <button
+            className="btn btn-ghost"
+            style={{ fontSize: 11, padding: "2px 8px" }}
+            onClick={() => { clearAuthToken(); setToken(null); }}
+            title="Sign out"
+          >
+            Sign out
+          </button>
         </div>
       </header>
 
@@ -1625,6 +2352,31 @@ export function App() {
                 <line x1="3" y1="6" x2="3.01" y2="6" />
                 <line x1="3" y1="12" x2="3.01" y2="12" />
                 <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`nav-square${view === "trading" ? " active" : ""}`}
+              title="Trading — place bets"
+              aria-pressed={view === "trading"}
+              onClick={() => setView("trading")}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
+                <polyline points="16 7 22 7 22 13"/>
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`nav-square${view === "betstats" ? " active" : ""}`}
+              title="Bet Statistics"
+              aria-pressed={view === "betstats"}
+              onClick={() => setView("betstats")}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="12" width="4" height="9" rx="1"/>
+                <rect x="10" y="7" width="4" height="14" rx="1"/>
+                <rect x="17" y="3" width="4" height="18" rx="1"/>
               </svg>
             </button>
           </div>
@@ -1739,6 +2491,18 @@ export function App() {
                 </section>
               )}
             </>
+          )}
+
+          {view === "trading" && (
+            <section style={{ padding: 16, overflowY: "auto", height: "100%" }}>
+              <TradingTab />
+            </section>
+          )}
+
+          {view === "betstats" && (
+            <section style={{ padding: 16, overflowY: "auto", height: "100%" }}>
+              <BetStatsTab />
+            </section>
           )}
         </main>
       </div>

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime
 
 from sqlalchemy import BigInteger, Date, Float, ForeignKey, Integer, PrimaryKeyConstraint, Text, TIMESTAMP
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -80,3 +81,32 @@ class PipelineRun(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
     triggered_by: Mapped[str | None] = mapped_column(Text)
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at_utc: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default="NOW()")
+
+
+class Bet(Base):
+    __tablename__ = "bets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    condition_id: Mapped[str] = mapped_column(Text, nullable=False, server_default="''")
+    token_id: Mapped[str] = mapped_column(Text, nullable=False)
+    side: Mapped[str] = mapped_column(Text, nullable=False)
+    bucket_label: Mapped[str] = mapped_column(Text, nullable=False)
+    market_title: Mapped[str] = mapped_column(Text, nullable=False)
+    event_slug: Mapped[str | None] = mapped_column(Text)
+    amount_usd: Mapped[float] = mapped_column(Float(precision=53), nullable=False)
+    theoretical_price: Mapped[float] = mapped_column(Float(precision=53), nullable=False)
+    actual_price: Mapped[float | None] = mapped_column(Float(precision=53))
+    clob_order_id: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="'pending'")
+    pnl: Mapped[float | None] = mapped_column(Float(precision=53))
+    snapshot_json: Mapped[dict | None] = mapped_column(JSONB)
+    placed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default="NOW()")
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))

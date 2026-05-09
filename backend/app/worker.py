@@ -11,11 +11,24 @@ from app.config import settings
 from app.database import close_db, get_session_factory, init_db
 from app.services.external import close_http_client
 from app.services.pipeline import run_pipeline_once
+from app.services.trading import resolve_open_bets
 
 logger = logging.getLogger(__name__)
 
 _shutdown = asyncio.Event()
 _SCHEDULER_NAME = "worker"
+_BET_RESOLVER_INTERVAL = 3600  # run once per hour
+
+
+async def _run_bet_resolver() -> None:
+    factory = get_session_factory()
+    async with factory() as session:
+        try:
+            updated = await resolve_open_bets(session)
+            if updated:
+                logger.info("bet resolver: updated %d bet(s)", updated)
+        except Exception:
+            logger.exception("bet resolver error")
 
 
 def _handle_signal(sig, _frame) -> None:
@@ -92,23 +105,35 @@ async def _main() -> None:
             next_run_at.isoformat(),
         )
 
+    # Bet resolver runs on its own interval
+    bet_resolver_next = datetime.now(timezone.utc) + timedelta(seconds=_BET_RESOLVER_INTERVAL)
+
     while not _shutdown.is_set():
         now_utc = datetime.now(timezone.utc)
-        timeout = max((next_run_at - now_utc).total_seconds(), 0.0)
+
+        # Check bet resolver
+        if now_utc >= bet_resolver_next:
+            await _run_bet_resolver()
+            bet_resolver_next = now_utc + timedelta(seconds=_BET_RESOLVER_INTERVAL)
+
+        next_wake = min(next_run_at, bet_resolver_next)
+        timeout = max((next_wake - now_utc).total_seconds(), 1.0)
         try:
             await asyncio.wait_for(_shutdown.wait(), timeout=timeout)
             break
         except asyncio.TimeoutError:
             pass
 
-        try:
-            await run_pipeline_once(triggered_by="worker")
-        except Exception:
-            logger.exception("worker: pipeline error")
+        now_utc = datetime.now(timezone.utc)
+        if now_utc >= next_run_at:
+            try:
+                await run_pipeline_once(triggered_by="worker")
+            except Exception:
+                logger.exception("worker: pipeline error")
 
-        next_run_at = _advance_to_future(next_run_at + timedelta(seconds=interval), datetime.now(timezone.utc), interval)
-        await _save_next_run(next_run_at)
-        logger.info("worker: next scheduled run at %s", next_run_at.isoformat())
+            next_run_at = _advance_to_future(next_run_at + timedelta(seconds=interval), datetime.now(timezone.utc), interval)
+            await _save_next_run(next_run_at)
+            logger.info("worker: next scheduled run at %s", next_run_at.isoformat())
 
     logger.info("worker exiting cleanly")
 
