@@ -13,6 +13,8 @@ export default defineConfig({
       "/markets": apiTarget,
       "/analytics": apiTarget,
       "/ops": apiTarget,
+      "/auth": apiTarget,
+      "/trading": apiTarget,
     },
   },
 });
