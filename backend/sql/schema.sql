@@ -79,3 +79,41 @@ ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_winning_label TEXT;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_winning_bucket_index INTEGER;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_resolution_checked_at_utc TIMESTAMPTZ;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS pm_resolution_meta JSONB;
+
+-- App settings (key-value store for runtime flags)
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO app_settings (key, value) VALUES
+  ('betting.execution_enabled', 'false'),
+  ('risk.kill_switch', 'false'),
+  ('betting.time_in_force', 'FOK'),
+  ('betting.slippage_tolerance', '0.05')
+ON CONFLICT (key) DO NOTHING;
+
+-- Bets placed via the trading tab
+CREATE TABLE IF NOT EXISTS bets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  condition_id TEXT NOT NULL DEFAULT '',
+  token_id TEXT NOT NULL,
+  side TEXT NOT NULL CHECK (side IN ('yes', 'no')),
+  bucket_label TEXT NOT NULL,
+  market_title TEXT NOT NULL,
+  event_slug TEXT,
+  amount_usd DOUBLE PRECISION NOT NULL,
+  theoretical_price DOUBLE PRECISION NOT NULL,
+  actual_price DOUBLE PRECISION,
+  clob_order_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('dry_run', 'pending', 'filled', 'failed', 'won', 'lost', 'cancelled')),
+  pnl DOUBLE PRECISION,
+  snapshot_json JSONB,
+  placed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
+CREATE INDEX IF NOT EXISTS idx_bets_placed_at ON bets(placed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bets_event_slug ON bets(event_slug) WHERE event_slug IS NOT NULL;

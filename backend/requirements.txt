@@ -8,3 +8,6 @@ pydantic-settings
 timezonefinder
 httpx
 cachetools
+python-jose[cryptography]
+passlib[bcrypt]
+py-clob-client

@@ -17,5 +17,18 @@ class Settings(BaseSettings):
     external_api_retries: int = 4
     run_scheduler_in_api: bool = False
 
+    # Auth
+    app_password: str = "changeme"
+    jwt_secret: str = "changeme-jwt-secret-at-least-32-chars"
+    jwt_expire_hours: int = 24
+
+    # Polymarket CLOB
+    polymarket_private_key: str = ""
+    polymarket_api_key: str = ""
+    polymarket_api_secret: str = ""
+    polymarket_api_passphrase: str = ""
+    polymarket_proxy_address: str = ""
+    polymarket_signature_type: str = ""
+
 
 settings = Settings()

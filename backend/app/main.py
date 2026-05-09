@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import close_db, init_db
 from app.services.external import close_http_client
-from app.api import analytics, markets, ops
+from app.api import analytics, markets, ops, auth, trading
 
 
 @asynccontextmanager
@@ -31,6 +31,8 @@ app.add_middleware(
 app.include_router(markets.router)
 app.include_router(analytics.router)
 app.include_router(ops.router)
+app.include_router(auth.router)
+app.include_router(trading.router)
 
 
 @app.get("/health", tags=["health"])
