@@ -1582,11 +1582,10 @@ function TradingConfirmModal({ pool, allocation, balance, execEnabled, onConfirm
 function TradingTab() {
   // Filters
   const [city, setCity] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [daysAhead, setDaysAhead] = useState("2");
   const [resolveHours, setResolveHours] = useState("");
-  const [yesMin, setYesMin] = useState("");
-  const [yesMax, setYesMax] = useState("");
+  const [probMin, setProbMin] = useState("");
+  const [probMax, setProbMax] = useState("");
   const [page, setPage] = useState(0);
 
   // Search results
@@ -1653,11 +1652,17 @@ function TradingTab() {
     setPage(p);
     const params = new URLSearchParams({ page: String(p), page_size: "20" });
     if (city.trim()) params.set("city", city.trim());
-    if (dateFrom) params.set("date_from", dateFrom);
-    if (dateTo) params.set("date_to", dateTo);
+    const todayStr = new Date().toISOString().split("T")[0];
+    params.set("date_from", todayStr);
+    const ahead = parseInt(daysAhead);
+    if (!Number.isNaN(ahead) && ahead >= 0) {
+      const toDate = new Date();
+      toDate.setDate(toDate.getDate() + ahead);
+      params.set("date_to", toDate.toISOString().split("T")[0]);
+    }
     if (resolveHours) params.set("resolve_within_hours", resolveHours);
-    if (yesMin) params.set("yes_price_min", (parseFloat(yesMin) / 100).toFixed(3));
-    if (yesMax) params.set("yes_price_max", (parseFloat(yesMax) / 100).toFixed(3));
+    if (probMin) params.set("prob_min", (parseFloat(probMin) / 100).toFixed(3));
+    if (probMax) params.set("prob_max", (parseFloat(probMax) / 100).toFixed(3));
     try {
       const d = await authFetch(`/trading/search?${params}`);
       setResults(d.results);
@@ -1746,24 +1751,20 @@ function TradingTab() {
             <input className="text-input" placeholder="london, munich…" value={city} onChange={(e) => setCity(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doSearch(0)} />
           </div>
           <div className="filter-field">
-            <label className="filter-label">Date from</label>
-            <input className="text-input" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          </div>
-          <div className="filter-field">
-            <label className="filter-label">Date to</label>
-            <input className="text-input" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <label className="filter-label">Days ahead</label>
+            <input className="text-input" type="number" min="0" max="30" placeholder="2" value={daysAhead} onChange={(e) => setDaysAhead(e.target.value)} />
           </div>
           <div className="filter-field">
             <label className="filter-label">Resolve within (h)</label>
             <input className="text-input" type="number" min="0" placeholder="48" value={resolveHours} onChange={(e) => setResolveHours(e.target.value)} />
           </div>
           <div className="filter-field">
-            <label className="filter-label">YES price min (¢)</label>
-            <input className="text-input" type="number" min="0" max="100" placeholder="30" value={yesMin} onChange={(e) => setYesMin(e.target.value)} />
+            <label className="filter-label">Prob. min (¢)</label>
+            <input className="text-input" type="number" min="0" max="100" placeholder="30" value={probMin} onChange={(e) => setProbMin(e.target.value)} />
           </div>
           <div className="filter-field">
-            <label className="filter-label">YES price max (¢)</label>
-            <input className="text-input" type="number" min="0" max="100" placeholder="70" value={yesMax} onChange={(e) => setYesMax(e.target.value)} />
+            <label className="filter-label">Prob. max (¢)</label>
+            <input className="text-input" type="number" min="0" max="100" placeholder="70" value={probMax} onChange={(e) => setProbMax(e.target.value)} />
           </div>
         </div>
         <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
